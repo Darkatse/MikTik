@@ -1,0 +1,21 @@
+[package]
+name = "miktik"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A unified, multi-backend tokenizer library for LLMs"
+license = "MIT"
+repository = "https://github.com/Darkatse/MikTik"
+homepage = "https://github.com/Darkatse/MikTik"
+documentation = "https://docs.rs/miktik"
+readme = "README.md"
+keywords = ["llm", "tokenizer", "tiktoken", "huggingface", "rust"]
+categories = ["text-processing"]
+exclude = [".local/**", "scripts/**", "tests/**", "Cargo.lock"]
+
+[dependencies]
+tiktoken-rs = "0.9.1"
+tokenizers = "0.22.2"
+sentencepiece-model = "0.1.4"
+encoding_rs = "0.8.35"
+thiserror = "2"
