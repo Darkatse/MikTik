@@ -99,9 +99,17 @@ impl AutoTokenizer for SentencePieceBackend {
     fn encode(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
         let encoding = self
             .tokenizer
-            .encode(text, false)
+            .encode_fast(text, false)
             .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
         Ok(encoding.get_ids().to_vec())
+    }
+
+    fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
+        let encoding = self
+            .tokenizer
+            .encode_fast(text, false)
+            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
+        Ok(encoding.get_ids().len())
     }
 
     fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
@@ -114,7 +122,7 @@ impl AutoTokenizer for SentencePieceBackend {
         messages.iter().try_fold(0usize, |acc, message| {
             let encoding = self
                 .tokenizer
-                .encode(message.content.as_str(), false)
+                .encode_fast(message.content.as_str(), false)
                 .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
             Ok(acc + encoding.get_ids().len())
         })

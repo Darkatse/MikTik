@@ -42,9 +42,17 @@ impl AutoTokenizer for HuggingFaceBackend {
     fn encode(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
         let encoding = self
             .tokenizer
-            .encode(text, false)
+            .encode_fast(text, false)
             .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
         Ok(encoding.get_ids().to_vec())
+    }
+
+    fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
+        let encoding = self
+            .tokenizer
+            .encode_fast(text, false)
+            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
+        Ok(encoding.get_ids().len())
     }
 
     fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
@@ -57,7 +65,7 @@ impl AutoTokenizer for HuggingFaceBackend {
         messages.iter().try_fold(0usize, |acc, message| {
             let encoding = self
                 .tokenizer
-                .encode(message.content.as_str(), false)
+                .encode_fast(message.content.as_str(), false)
                 .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
             Ok(acc + encoding.get_ids().len())
         })
@@ -108,9 +116,13 @@ mod tests {
             .expect("backend should load from bytes");
 
         let ids = backend.encode("hello").expect("encode should succeed");
+        let count = backend
+            .count_tokens("hello")
+            .expect("count_tokens should succeed");
         let decoded = backend.decode(&ids).expect("decode should succeed");
 
         assert_eq!(ids.len(), 1);
+        assert_eq!(count, ids.len());
         assert_eq!(decoded, "hello");
     }
 

@@ -19,3 +19,21 @@ tokenizers = "0.22.2"
 sentencepiece-model = "0.1.4"
 encoding_rs = "0.8.35"
 thiserror = "2"
+
+[profile.dev.package.tokenizers]
+opt-level = 3
+
+[profile.dev.package."tiktoken-rs"]
+opt-level = 3
+
+[profile.dev.package."sentencepiece-model"]
+opt-level = 3
+
+[profile.test.package.tokenizers]
+opt-level = 3
+
+[profile.test.package."tiktoken-rs"]
+opt-level = 3
+
+[profile.test.package."sentencepiece-model"]
+opt-level = 3
