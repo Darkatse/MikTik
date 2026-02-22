@@ -17,7 +17,7 @@ MikTik provides one interface for token counting across model families:
 
 ```toml
 [dependencies]
-miktik = "0.1"
+miktik = "0.1.1"
 ```
 
 ## Quick Start
