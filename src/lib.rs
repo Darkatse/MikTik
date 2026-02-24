@@ -22,6 +22,7 @@
 //!     Message::new("user", "What is Rust?"),
 //!     Message::new("assistant", "Rust is a systems programming language."),
 //! ];
+//! // Requires `huggingface` feature.
 //! registry
 //!     .register_model_file("claude", "/path/to/claude-tokenizer.json")
 //!     .unwrap();

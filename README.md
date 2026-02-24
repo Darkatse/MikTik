@@ -17,8 +17,23 @@ MikTik provides one interface for token counting across model families:
 
 ```toml
 [dependencies]
-miktik = "0.1.1"
+miktik = "0.1.2"
 ```
+
+Default build enables only OpenAI (`tiktoken-rs`) for a minimal footprint.
+
+Enable additional backends explicitly when needed:
+
+```toml
+[dependencies]
+miktik = { version = "0.1", features = ["huggingface", "sentencepiece"] }
+```
+
+Feature matrix:
+- `openai` (default): OpenAI-compatible counting via `tiktoken-rs`
+- `huggingface`: tokenizer JSON loading via `tokenizers`
+- `sentencepiece`: SentencePiece `.model` loading (`huggingface` implied)
+- `full`: convenience bundle (`openai + huggingface + sentencepiece`)
 
 ## Quick Start
 
@@ -29,6 +44,7 @@ let registry = TokenizerRegistry::new();
 
 let text_tokens = registry.count_tokens("gpt-4o", "Hello, world!")?;
 
+// Requires `huggingface` feature.
 registry.register_model_file("claude", "/path/to/claude-tokenizer.json")?;
 let chat_tokens = registry.count_messages(
     "claude",

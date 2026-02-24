@@ -1,6 +1,6 @@
 [package]
 name = "miktik"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "A unified, multi-backend tokenizer library for LLMs"
@@ -13,11 +13,17 @@ keywords = ["llm", "tokenizer", "tiktoken", "huggingface", "rust"]
 categories = ["text-processing"]
 exclude = [".local/**", "scripts/**", "tests/**", "Cargo.lock"]
 
+[features]
+default = ["openai"]
+openai = ["dep:tiktoken-rs"]
+huggingface = ["dep:tokenizers"]
+sentencepiece = ["huggingface", "dep:sentencepiece-model"]
+full = ["openai", "huggingface", "sentencepiece"]
+
 [dependencies]
-tiktoken-rs = "0.9.1"
-tokenizers = "0.22.2"
-sentencepiece-model = "0.1.4"
-encoding_rs = "0.8.35"
+tiktoken-rs = { version = "0.9.1", optional = true }
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
+sentencepiece-model = { version = "0.1.4", optional = true }
 thiserror = "2"
 
 [profile.dev.package.tokenizers]

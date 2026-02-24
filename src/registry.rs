@@ -2,14 +2,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+#[cfg(feature = "huggingface")]
 use crate::backend::huggingface::HuggingFaceBackend;
+#[cfg(feature = "sentencepiece")]
 use crate::backend::sentencepiece::SentencePieceBackend;
+#[cfg(feature = "openai")]
 use crate::backend::tiktoken::TiktokenBackend;
 use crate::error::TokenizerError;
 use crate::model::Message;
 use crate::tokenizer::AutoTokenizer;
 
 type ModelResolver = fn(&str) -> Option<&'static str>;
+type ModelLoader = fn(&ModelSource) -> Result<Box<dyn AutoTokenizer>, TokenizerError>;
 
 const FALLBACK_MODEL: &str = "gpt-3.5-turbo";
 const TIKTOKEN_MODELS: &[&str] = &["o1", "gpt-4o", "gpt-4", "gpt-4-32k", "gpt-3.5-turbo"];
@@ -123,6 +127,10 @@ fn resolve_hf_json_family(name: &str) -> Option<&'static str> {
     resolve_from_contains_aliases(name, HF_JSON_ALIASES)
 }
 
+#[cfg_attr(
+    not(any(feature = "huggingface", feature = "sentencepiece")),
+    allow(dead_code)
+)]
 #[derive(Clone, Debug)]
 enum ModelSource {
     File(PathBuf),
@@ -199,6 +207,12 @@ impl TokenizerRegistry {
         model: &str,
         source: ModelSource,
     ) -> Result<(), TokenizerError> {
+        if !Self::supports_non_openai_backends() {
+            return Err(TokenizerError::LoadError(
+                "non-OpenAI backends are disabled at compile time; enable feature 'huggingface' or 'sentencepiece'".to_string(),
+            ));
+        }
+
         let canonical = Self::resolve_model(model);
         if !Self::is_huggingface_model(&canonical) {
             return Err(TokenizerError::ModelNotFound(format!(
@@ -256,6 +270,16 @@ impl TokenizerRegistry {
         WEB_TOKENIZER_MODELS.contains(&canonical)
     }
 
+    fn supports_non_openai_backends() -> bool {
+        cfg!(any(feature = "huggingface", feature = "sentencepiece"))
+    }
+
+    fn disabled_backend_error(canonical: &str, feature_hint: &str) -> TokenizerError {
+        TokenizerError::LoadError(format!(
+            "canonical model '{canonical}' requires compile-time feature '{feature_hint}'"
+        ))
+    }
+
     /// Get (or lazily load) a tokenizer for the given model name.
     pub fn get(&self, model: &str) -> Result<Arc<dyn AutoTokenizer>, TokenizerError> {
         let canonical = Self::resolve_model(model);
@@ -305,7 +329,14 @@ impl TokenizerRegistry {
     /// Internal: instantiate the appropriate backend for a canonical model name.
     fn load_tokenizer(&self, canonical: &str) -> Result<Box<dyn AutoTokenizer>, TokenizerError> {
         if Self::is_tiktoken_model(canonical) {
-            return Ok(Box::new(TiktokenBackend::from_model(canonical)?));
+            #[cfg(feature = "openai")]
+            {
+                return Ok(Box::new(TiktokenBackend::from_model(canonical)?));
+            }
+            #[cfg(not(feature = "openai"))]
+            {
+                return Err(Self::disabled_backend_error(canonical, "openai"));
+            }
         }
         if Self::is_huggingface_model(canonical) {
             return self.load_non_openai_tokenizer(canonical);
@@ -320,6 +351,13 @@ impl TokenizerRegistry {
         &self,
         canonical: &str,
     ) -> Result<Box<dyn AutoTokenizer>, TokenizerError> {
+        if !Self::supports_non_openai_backends() {
+            return Err(Self::disabled_backend_error(
+                canonical,
+                "huggingface or sentencepiece",
+            ));
+        }
+
         let source = {
             let sources = self.model_sources.read().map_err(|e| {
                 TokenizerError::LoadError(format!("model source lock poisoned: {e}"))
@@ -333,51 +371,26 @@ impl TokenizerRegistry {
             ))
         })?;
 
-        if Self::is_sentencepiece_model(canonical) {
-            let sentencepiece = Self::load_sentencepiece_from_source(&source);
-            if let Ok(tokenizer) = sentencepiece {
-                return Ok(tokenizer);
-            }
-            let sentencepiece_err = match sentencepiece {
-                Err(err) => err.to_string(),
-                Ok(_) => unreachable!("success should have returned earlier"),
-            };
-
-            let json = Self::load_huggingface_json_from_source(&source);
-            if let Ok(tokenizer) = json {
-                return Ok(tokenizer);
-            }
-            let json_err = match json {
-                Err(err) => err.to_string(),
-                Ok(_) => unreachable!("success should have returned earlier"),
-            };
-
-            return Err(TokenizerError::LoadError(format!(
-                "failed to load canonical model '{canonical}' as SentencePiece ({sentencepiece_err}) and as tokenizer JSON ({json_err})"
-            )));
+        let loaders = Self::loader_chain_for(canonical);
+        if loaders.is_empty() {
+            return Err(Self::disabled_backend_error(
+                canonical,
+                "huggingface or sentencepiece",
+            ));
         }
 
-        if Self::is_web_tokenizer_model(canonical) {
-            let json = Self::load_huggingface_json_from_source(&source);
-            if let Ok(tokenizer) = json {
-                return Ok(tokenizer);
+        let mut errors = Vec::with_capacity(loaders.len());
+        for (format_name, loader) in loaders {
+            match loader(&source) {
+                Ok(tokenizer) => return Ok(tokenizer),
+                Err(err) => errors.push(format!("{format_name}: {err}")),
             }
-            let json_err = match json {
-                Err(err) => err.to_string(),
-                Ok(_) => unreachable!("success should have returned earlier"),
-            };
+        }
 
-            let sentencepiece = Self::load_sentencepiece_from_source(&source);
-            if let Ok(tokenizer) = sentencepiece {
-                return Ok(tokenizer);
-            }
-            let sentencepiece_err = match sentencepiece {
-                Err(err) => err.to_string(),
-                Ok(_) => unreachable!("success should have returned earlier"),
-            };
-
+        if !errors.is_empty() {
             return Err(TokenizerError::LoadError(format!(
-                "failed to load canonical model '{canonical}' as tokenizer JSON ({json_err}) and as SentencePiece ({sentencepiece_err})"
+                "failed to load canonical model '{canonical}': {}",
+                errors.join("; ")
             )));
         }
 
@@ -386,6 +399,36 @@ impl TokenizerRegistry {
         )))
     }
 
+    fn loader_chain_for(canonical: &str) -> Vec<(&'static str, ModelLoader)> {
+        #[allow(unused_mut)]
+        let mut loaders = Vec::with_capacity(2);
+        if Self::is_sentencepiece_model(canonical) {
+            #[cfg(feature = "sentencepiece")]
+            loaders.push((
+                "SentencePiece",
+                Self::load_sentencepiece_from_source as ModelLoader,
+            ));
+            #[cfg(feature = "huggingface")]
+            loaders.push((
+                "tokenizer JSON",
+                Self::load_huggingface_json_from_source as ModelLoader,
+            ));
+        } else if Self::is_web_tokenizer_model(canonical) {
+            #[cfg(feature = "huggingface")]
+            loaders.push((
+                "tokenizer JSON",
+                Self::load_huggingface_json_from_source as ModelLoader,
+            ));
+            #[cfg(feature = "sentencepiece")]
+            loaders.push((
+                "SentencePiece",
+                Self::load_sentencepiece_from_source as ModelLoader,
+            ));
+        }
+        loaders
+    }
+
+    #[cfg(feature = "huggingface")]
     fn load_huggingface_json_from_source(
         source: &ModelSource,
     ) -> Result<Box<dyn AutoTokenizer>, TokenizerError> {
@@ -396,6 +439,7 @@ impl TokenizerRegistry {
         Ok(Box::new(backend))
     }
 
+    #[cfg(feature = "sentencepiece")]
     fn load_sentencepiece_from_source(
         source: &ModelSource,
     ) -> Result<Box<dyn AutoTokenizer>, TokenizerError> {
@@ -415,15 +459,21 @@ impl Default for TokenizerRegistry {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "huggingface")]
     use std::fs;
+    #[cfg(feature = "openai")]
     use std::thread;
+    #[cfg(feature = "huggingface")]
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[cfg(feature = "huggingface")]
     use tokenizers::Tokenizer;
+    #[cfg(feature = "huggingface")]
     use tokenizers::models::wordlevel::WordLevel;
 
     use super::*;
 
+    #[cfg(feature = "huggingface")]
     fn test_tokenizer_json() -> String {
         let vocab = [
             ("<unk>".to_string(), 0),
@@ -441,6 +491,7 @@ mod tests {
         tokenizer.to_string(false).expect("serialize tokenizer")
     }
 
+    #[cfg(feature = "huggingface")]
     fn temp_json_path() -> std::path::PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -498,6 +549,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "openai")]
     fn get_reuses_cached_tokenizer_instances() {
         let registry = TokenizerRegistry::new();
         let first = registry.get("gpt-4o").expect("first load should succeed");
@@ -508,6 +560,23 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(feature = "huggingface", feature = "sentencepiece")))]
+    fn non_openai_models_report_disabled_feature_error() {
+        let registry = TokenizerRegistry::new();
+        let err = registry
+            .count_tokens("claude-3-5-sonnet", "hello")
+            .expect_err("non-openai backend should be disabled");
+
+        match err {
+            TokenizerError::LoadError(message) => {
+                assert!(message.contains("compile-time feature"));
+            }
+            other => panic!("unexpected error type: {other}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "huggingface")]
     fn unregistered_hf_resource_returns_explicit_error() {
         let registry = TokenizerRegistry::new();
         let err = match registry.get("claude-3-5-sonnet") {
@@ -524,6 +593,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "huggingface")]
     fn register_hf_bytes_enables_claude_counting() {
         let registry = TokenizerRegistry::new();
         registry
@@ -537,6 +607,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "huggingface")]
     fn register_hf_file_enables_llama3_counting() {
         let registry = TokenizerRegistry::new();
         let json = test_tokenizer_json();
@@ -556,6 +627,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "huggingface")]
     fn register_hf_rejects_non_hf_canonical_models() {
         let registry = TokenizerRegistry::new();
         let err = registry
@@ -571,6 +643,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "openai")]
     fn concurrent_get_reuses_single_cached_instance() {
         let registry = Arc::new(TokenizerRegistry::new());
         let models = [
@@ -606,6 +679,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "huggingface")]
     fn invalid_hf_resource_bytes_propagate_load_error() {
         let registry = TokenizerRegistry::new();
         registry
@@ -625,6 +699,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "huggingface")]
     fn sentencepiece_family_can_fallback_to_json_payload() {
         let registry = TokenizerRegistry::new();
         registry
@@ -638,6 +713,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "huggingface")]
     fn invalid_hf_resource_file_propagates_load_error() {
         let registry = TokenizerRegistry::new();
         let missing_path = std::env::temp_dir().join("miktik-missing-tokenizer.json");
@@ -660,6 +736,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "huggingface")]
     fn register_hf_source_replaces_cached_instance() {
         let registry = TokenizerRegistry::new();
         registry
