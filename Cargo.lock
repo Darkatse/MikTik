@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "miktik"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "sentencepiece-model",
  "thiserror 2.0.18",
