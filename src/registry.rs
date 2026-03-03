@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -16,7 +17,14 @@ type ModelResolver = fn(&str) -> Option<&'static str>;
 type ModelLoader = fn(&ModelSource) -> Result<Box<dyn AutoTokenizer>, TokenizerError>;
 
 const FALLBACK_MODEL: &str = "gpt-3.5-turbo";
-const TIKTOKEN_MODELS: &[&str] = &["o1", "gpt-4o", "gpt-4", "gpt-4-32k", "gpt-3.5-turbo"];
+const TIKTOKEN_MODELS: &[&str] = &[
+    "o1",
+    "gpt-4o",
+    "gpt-4",
+    "gpt-4-32k",
+    "gpt-3.5-turbo",
+    "gpt-3.5-turbo-0301",
+];
 const HUGGINGFACE_MODELS: &[&str] = &[
     "claude",
     "llama3",
@@ -42,9 +50,9 @@ const WEB_TOKENIZER_MODELS: &[&str] = &[
     "nemo",
     "deepseek",
 ];
-const O_SERIES_PREFIXES: &[&str] = &["o1", "o3", "gpt-5"];
+const O_SERIES_PREFIXES: &[&str] = &["o1", "o3", "o4", "gpt-5"];
 const GPT4_FAMILY_MATCHERS: &[&str] = &["gpt-4", "chatgpt-4o"];
-const GPT4O_MATCHERS: &[&str] = &["4o", "4.5", "chatgpt-4o"];
+const GPT4O_MATCHERS: &[&str] = &["4o", "4.1", "4.5", "chatgpt-4o"];
 const CLAUDE_ALIASES: &[(&str, &str)] = &[("claude", "claude")];
 const LLAMA_ALIASES: &[(&str, &str)] = &[
     // Keep llama3 ahead of llama to preserve priority.
@@ -147,6 +155,22 @@ pub struct TokenizerRegistry {
 }
 
 impl TokenizerRegistry {
+    pub fn supported_tiktoken_models() -> &'static [&'static str] {
+        TIKTOKEN_MODELS
+    }
+
+    pub fn supported_huggingface_models() -> &'static [&'static str] {
+        HUGGINGFACE_MODELS
+    }
+
+    pub fn supported_sentencepiece_models() -> &'static [&'static str] {
+        SENTENCEPIECE_MODELS
+    }
+
+    pub fn supported_web_tokenizer_models() -> &'static [&'static str] {
+        WEB_TOKENIZER_MODELS
+    }
+
     /// Create a new, empty registry.
     pub fn new() -> Self {
         Self {
@@ -213,8 +237,8 @@ impl TokenizerRegistry {
             ));
         }
 
-        let canonical = Self::resolve_model(model);
-        if !Self::is_huggingface_model(&canonical) {
+        let canonical = Self::resolve_model_ref(model);
+        if !Self::is_huggingface_model_canonical(canonical) {
             return Err(TokenizerError::ModelNotFound(format!(
                 "model '{model}' resolves to '{canonical}', which is not a HuggingFace-backed model"
             )));
@@ -224,10 +248,10 @@ impl TokenizerRegistry {
             let mut sources = self.model_sources.write().map_err(|e| {
                 TokenizerError::LoadError(format!("model source lock poisoned: {e}"))
             })?;
-            sources.insert(canonical.clone(), source);
+            sources.insert(canonical.to_string(), source);
         }
 
-        self.invalidate_cached_model(&canonical)
+        self.invalidate_cached_model(canonical)
     }
 
     fn invalidate_cached_model(&self, canonical: &str) -> Result<(), TokenizerError> {
@@ -245,28 +269,92 @@ impl TokenizerRegistry {
     /// Implements the alias-matching chain from the architecture spec:
     /// O-series → GPT-4 family → Claude → LLaMA → open-source → fallback.
     pub fn resolve_model(model_name: &str) -> String {
-        let normalized = model_name.to_ascii_lowercase();
-        for resolver in MODEL_RESOLUTION_CHAIN {
-            if let Some(canonical) = resolver(&normalized) {
-                return canonical.to_string();
-            }
-        }
-        FALLBACK_MODEL.to_string()
+        Self::resolve_model_ref(model_name).to_string()
     }
 
-    fn is_tiktoken_model(canonical: &str) -> bool {
+    pub fn resolve_model_ref(model_name: &str) -> &'static str {
+        let trimmed = model_name.trim();
+        if trimmed.is_empty() {
+            return FALLBACK_MODEL;
+        }
+
+        let normalized = if trimmed
+            .as_bytes()
+            .iter()
+            .any(|byte| byte.is_ascii_uppercase())
+        {
+            Cow::Owned(trimmed.to_ascii_lowercase())
+        } else {
+            Cow::Borrowed(trimmed)
+        };
+
+        if let Some(canonical) = Self::resolve_model_exact(normalized.as_ref()) {
+            return canonical;
+        }
+
+        for resolver in MODEL_RESOLUTION_CHAIN {
+            if let Some(canonical) = resolver(normalized.as_ref()) {
+                return canonical;
+            }
+        }
+
+        FALLBACK_MODEL
+    }
+
+    fn resolve_model_exact(normalized: &str) -> Option<&'static str> {
+        match normalized {
+            "o1" => Some("o1"),
+            "gpt-4o" => Some("gpt-4o"),
+            "gpt-4" => Some("gpt-4"),
+            "gpt-4-32k" => Some("gpt-4-32k"),
+            "gpt-3.5-turbo" => Some("gpt-3.5-turbo"),
+            "gpt-3.5-turbo-0301" => Some("gpt-3.5-turbo-0301"),
+            "claude" => Some("claude"),
+            "llama3" => Some("llama3"),
+            "llama" => Some("llama"),
+            "mistral" => Some("mistral"),
+            "yi" => Some("yi"),
+            "gemma" => Some("gemma"),
+            "jamba" => Some("jamba"),
+            "nerdstash" => Some("nerdstash"),
+            "command-r" => Some("command-r"),
+            "command-a" => Some("command-a"),
+            "qwen2" => Some("qwen2"),
+            "nemo" => Some("nemo"),
+            "deepseek" => Some("deepseek"),
+            _ => None,
+        }
+    }
+
+    pub fn is_tiktoken_model(model: &str) -> bool {
+        Self::is_tiktoken_model_canonical(Self::resolve_model_ref(model))
+    }
+
+    pub fn is_huggingface_model(model: &str) -> bool {
+        Self::is_huggingface_model_canonical(Self::resolve_model_ref(model))
+    }
+
+    pub fn is_sentencepiece_model(model: &str) -> bool {
+        Self::is_sentencepiece_model_canonical(Self::resolve_model_ref(model))
+    }
+
+    pub fn is_web_tokenizer_model(model: &str) -> bool {
+        Self::is_web_tokenizer_model_canonical(Self::resolve_model_ref(model))
+    }
+
+    fn is_tiktoken_model_canonical(canonical: &str) -> bool {
         TIKTOKEN_MODELS.contains(&canonical)
     }
 
-    fn is_huggingface_model(canonical: &str) -> bool {
+    fn is_huggingface_model_canonical(canonical: &str) -> bool {
         HUGGINGFACE_MODELS.contains(&canonical)
     }
 
-    fn is_sentencepiece_model(canonical: &str) -> bool {
+    fn is_sentencepiece_model_canonical(canonical: &str) -> bool {
         SENTENCEPIECE_MODELS.contains(&canonical)
     }
 
-    fn is_web_tokenizer_model(canonical: &str) -> bool {
+    fn is_web_tokenizer_model_canonical(canonical: &str) -> bool {
         WEB_TOKENIZER_MODELS.contains(&canonical)
     }
 
@@ -282,15 +370,25 @@ impl TokenizerRegistry {
 
     /// Get (or lazily load) a tokenizer for the given model name.
     pub fn get(&self, model: &str) -> Result<Arc<dyn AutoTokenizer>, TokenizerError> {
-        let canonical = Self::resolve_model(model);
+        let canonical = Self::resolve_model_ref(model);
+        self.get_with_canonical(canonical)
+    }
 
+    pub fn get_canonical(&self, canonical: &str) -> Result<Arc<dyn AutoTokenizer>, TokenizerError> {
+        self.get_with_canonical(canonical)
+    }
+
+    fn get_with_canonical(
+        &self,
+        canonical: &str,
+    ) -> Result<Arc<dyn AutoTokenizer>, TokenizerError> {
         // Fast path: read lock
         {
             let cache = self
                 .cache
                 .read()
                 .map_err(|e| TokenizerError::LoadError(format!("cache lock poisoned: {e}")))?;
-            if let Some(tok) = cache.get(&canonical) {
+            if let Some(tok) = cache.get(canonical) {
                 return Ok(Arc::clone(tok));
             }
         }
@@ -302,19 +400,27 @@ impl TokenizerRegistry {
             .map_err(|e| TokenizerError::LoadError(format!("cache lock poisoned: {e}")))?;
 
         // Double-check after acquiring write lock
-        if let Some(tok) = cache.get(&canonical) {
+        if let Some(tok) = cache.get(canonical) {
             return Ok(Arc::clone(tok));
         }
 
-        let tok = self.load_tokenizer(&canonical)?;
+        let tok = self.load_tokenizer(canonical)?;
         let tok = Arc::from(tok);
-        cache.insert(canonical, Arc::clone(&tok));
+        cache.insert(canonical.to_string(), Arc::clone(&tok));
         Ok(tok)
     }
 
     /// Convenience: count tokens for a plain text string.
     pub fn count_tokens(&self, model: &str, text: &str) -> Result<usize, TokenizerError> {
         self.get(model)?.count_tokens(text)
+    }
+
+    pub fn count_tokens_canonical(
+        &self,
+        canonical: &str,
+        text: &str,
+    ) -> Result<usize, TokenizerError> {
+        self.get_canonical(canonical)?.count_tokens(text)
     }
 
     /// Convenience: count tokens for a list of chat messages.
@@ -326,9 +432,17 @@ impl TokenizerRegistry {
         self.get(model)?.count_messages(messages)
     }
 
+    pub fn count_messages_canonical(
+        &self,
+        canonical: &str,
+        messages: &[Message],
+    ) -> Result<usize, TokenizerError> {
+        self.get_canonical(canonical)?.count_messages(messages)
+    }
+
     /// Internal: instantiate the appropriate backend for a canonical model name.
     fn load_tokenizer(&self, canonical: &str) -> Result<Box<dyn AutoTokenizer>, TokenizerError> {
-        if Self::is_tiktoken_model(canonical) {
+        if Self::is_tiktoken_model_canonical(canonical) {
             #[cfg(feature = "openai")]
             {
                 return Ok(Box::new(TiktokenBackend::from_model(canonical)?));
@@ -338,7 +452,7 @@ impl TokenizerRegistry {
                 return Err(Self::disabled_backend_error(canonical, "openai"));
             }
         }
-        if Self::is_huggingface_model(canonical) {
+        if Self::is_huggingface_model_canonical(canonical) {
             return self.load_non_openai_tokenizer(canonical);
         }
 
@@ -402,7 +516,7 @@ impl TokenizerRegistry {
     fn loader_chain_for(canonical: &str) -> Vec<(&'static str, ModelLoader)> {
         #[allow(unused_mut)]
         let mut loaders = Vec::with_capacity(2);
-        if Self::is_sentencepiece_model(canonical) {
+        if Self::is_sentencepiece_model_canonical(canonical) {
             #[cfg(feature = "sentencepiece")]
             loaders.push((
                 "SentencePiece",
@@ -413,7 +527,7 @@ impl TokenizerRegistry {
                 "tokenizer JSON",
                 Self::load_huggingface_json_from_source as ModelLoader,
             ));
-        } else if Self::is_web_tokenizer_model(canonical) {
+        } else if Self::is_web_tokenizer_model_canonical(canonical) {
             #[cfg(feature = "huggingface")]
             loaders.push((
                 "tokenizer JSON",
@@ -509,11 +623,34 @@ mod tests {
             TokenizerRegistry::resolve_model("gpt-4.5-preview"),
             "gpt-4o"
         );
+        assert_eq!(TokenizerRegistry::resolve_model("gpt-4.1"), "gpt-4o");
         assert_eq!(
             TokenizerRegistry::resolve_model("chatgpt-4o-latest"),
             "gpt-4o"
         );
         assert_eq!(TokenizerRegistry::resolve_model("o3-mini"), "o1");
+        assert_eq!(TokenizerRegistry::resolve_model("o4-mini"), "o1");
+        assert_eq!(
+            TokenizerRegistry::resolve_model("gpt-3.5-turbo-0301"),
+            "gpt-3.5-turbo-0301"
+        );
+    }
+
+    #[test]
+    fn resolve_model_ref_matches_resolve_model() {
+        for model in [
+            "gpt-4o",
+            "gpt-4.1",
+            "chatgpt-4o-latest",
+            "claude-3-5-sonnet",
+            "llama-3.3-70b",
+            "my-unknown-model",
+        ] {
+            assert_eq!(
+                TokenizerRegistry::resolve_model_ref(model),
+                TokenizerRegistry::resolve_model(model)
+            );
+        }
     }
 
     #[test]

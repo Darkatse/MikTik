@@ -17,7 +17,7 @@ MikTik provides one interface for token counting across model families:
 
 ```toml
 [dependencies]
-miktik = "0.1.2"
+miktik = "0.2"
 ```
 
 Default build enables only OpenAI (`tiktoken-rs`) for a minimal footprint.
@@ -26,7 +26,7 @@ Enable additional backends explicitly when needed:
 
 ```toml
 [dependencies]
-miktik = { version = "0.1", features = ["huggingface", "sentencepiece"] }
+miktik = { version = "0.2", features = ["huggingface", "sentencepiece"] }
 ```
 
 Feature matrix:
@@ -59,10 +59,40 @@ let chat_tokens = registry.count_messages(
 ## Model Resolution
 
 Raw model names are canonicalized by rule chain:
-- O-series (`o1`/`o3`/`gpt-5`) -> `o1`
-- GPT-4 family -> `gpt-4o` / `gpt-4-32k` / `gpt-4`
+- O-series (`o1`/`o3`/`o4`/`gpt-5`) -> `o1`
+- GPT-4 family -> `gpt-4o` / `gpt-4-32k` / `gpt-4` (e.g. `gpt-4.1` -> `gpt-4o`)
+- Legacy model variants are preserved when they affect counting (e.g. `gpt-3.5-turbo-0301`)
 - Claude / LLaMA / open-source aliases -> canonical family id
 - Unknown models fallback to `gpt-3.5-turbo`
+
+For performance-sensitive callers, prefer non-allocating resolution:
+
+```rust
+use miktik::TokenizerRegistry;
+
+let canonical = TokenizerRegistry::resolve_model_ref("chatgpt-4o-latest");
+assert_eq!(canonical, "gpt-4o");
+```
+
+If you already keep a canonical model string around, you can bypass resolution entirely:
+
+```rust
+use miktik::TokenizerRegistry;
+
+let registry = TokenizerRegistry::new();
+let canonical = "gpt-4o";
+let count = registry.count_tokens_canonical(canonical, "Hello!")?;
+# Ok::<(), miktik::TokenizerError>(())
+```
+
+You can also query model families (resolution-aware):
+
+```rust
+use miktik::TokenizerRegistry;
+
+assert!(TokenizerRegistry::is_tiktoken_model("gpt-4.1"));
+assert!(TokenizerRegistry::is_huggingface_model("claude-3-5-sonnet"));
+```
 
 ## Model Resource Registration
 
