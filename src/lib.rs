@@ -16,6 +16,10 @@
 //!
 //! // Count tokens in plain text
 //! let count = registry.count_tokens("gpt-4o", "Hello, world!").unwrap();
+//! let cumulative = registry
+//!     .estimate_cumulative_token_counts("gpt-4o", "Hello", &[", world", "!"])
+//!     .unwrap();
+//! assert_eq!(cumulative.len(), 2);
 //!
 //! // Count tokens in a chat conversation
 //! let messages = vec![

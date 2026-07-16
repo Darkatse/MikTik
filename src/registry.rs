@@ -24,6 +24,7 @@ const TIKTOKEN_MODELS: &[&str] = &[
     "gpt-4-32k",
     "gpt-3.5-turbo",
     "gpt-3.5-turbo-0301",
+    "gpt2",
 ];
 const HUGGINGFACE_MODELS: &[&str] = &[
     "claude",
@@ -309,6 +310,7 @@ impl TokenizerRegistry {
             "gpt-4-32k" => Some("gpt-4-32k"),
             "gpt-3.5-turbo" => Some("gpt-3.5-turbo"),
             "gpt-3.5-turbo-0301" => Some("gpt-3.5-turbo-0301"),
+            "gpt2" | "gpt-2" => Some("gpt2"),
             "claude" => Some("claude"),
             "llama3" => Some("llama3"),
             "llama" => Some("llama"),
@@ -421,6 +423,27 @@ impl TokenizerRegistry {
         text: &str,
     ) -> Result<usize, TokenizerError> {
         self.get_canonical(canonical)?.count_tokens(text)
+    }
+
+    /// Estimate token counts after cumulatively appending each addition to `base`.
+    pub fn estimate_cumulative_token_counts(
+        &self,
+        model: &str,
+        base: &str,
+        additions: &[&str],
+    ) -> Result<Vec<usize>, TokenizerError> {
+        self.get(model)?
+            .estimate_cumulative_token_counts(base, additions)
+    }
+
+    pub fn estimate_cumulative_token_counts_canonical(
+        &self,
+        canonical: &str,
+        base: &str,
+        additions: &[&str],
+    ) -> Result<Vec<usize>, TokenizerError> {
+        self.get_canonical(canonical)?
+            .estimate_cumulative_token_counts(base, additions)
     }
 
     /// Convenience: count tokens for a list of chat messages.
@@ -634,6 +657,7 @@ mod tests {
             TokenizerRegistry::resolve_model("gpt-3.5-turbo-0301"),
             "gpt-3.5-turbo-0301"
         );
+        assert_eq!(TokenizerRegistry::resolve_model("gpt-2"), "gpt2");
     }
 
     #[test]
@@ -697,6 +721,27 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "openai")]
+    fn cumulative_estimates_are_available_for_tiktoken_models() {
+        let registry = TokenizerRegistry::new();
+        let base = "A stable world description with ordinary words and punctuation.\n".repeat(100);
+        let additions = ["First entry.\n", "第二条目。\n", "Spaces  \n🙂\n"];
+
+        let estimates = registry
+            .estimate_cumulative_token_counts("gpt-4o", &base, &additions)
+            .expect("cumulative estimate should succeed");
+
+        let mut text = base;
+        for (addition, estimate) in additions.iter().zip(estimates) {
+            text.push_str(addition);
+            let exact = registry
+                .count_tokens("gpt-4o", &text)
+                .expect("exact count should succeed");
+            assert!(estimate.abs_diff(exact) * 20 <= exact.max(1));
+        }
+    }
+
+    #[test]
     #[cfg(not(any(feature = "huggingface", feature = "sentencepiece")))]
     fn non_openai_models_report_disabled_feature_error() {
         let registry = TokenizerRegistry::new();
@@ -740,7 +785,11 @@ mod tests {
         let count = registry
             .count_tokens("claude", "hello")
             .expect("counting should succeed");
+        let cumulative = registry
+            .estimate_cumulative_token_counts("claude", "", &["hello", "world"])
+            .expect("cumulative estimate should succeed");
         assert_eq!(count, 1);
+        assert_eq!(cumulative, vec![1, 1]);
     }
 
     #[test]

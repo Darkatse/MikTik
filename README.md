@@ -8,7 +8,8 @@ MikTik provides one interface for token counting across model families:
 - SentencePiece `.model` tokenizers via `sentencepiece-model` + `tokenizers`
 
 ## Design Goals
-- Unified API for `encode` / `decode` / message token counting
+- Unified API for `encode` / `decode` / token counting
+- Fast cumulative token estimates shared by every backend
 - Lazy loading with thread-safe registry cache
 - Explicit error propagation (no hidden panic paths)
 - No network I/O in core library (resource ownership stays in caller)
@@ -17,7 +18,7 @@ MikTik provides one interface for token counting across model families:
 
 ```toml
 [dependencies]
-miktik = "0.2"
+miktik = "0.3"
 ```
 
 Default build enables only OpenAI (`tiktoken-rs`) for a minimal footprint.
@@ -26,7 +27,7 @@ Enable additional backends explicitly when needed:
 
 ```toml
 [dependencies]
-miktik = { version = "0.2", features = ["huggingface", "sentencepiece"] }
+miktik = { version = "0.3", features = ["huggingface", "sentencepiece"] }
 ```
 
 Feature matrix:
@@ -43,6 +44,12 @@ use miktik::{Message, TokenizerRegistry};
 let registry = TokenizerRegistry::new();
 
 let text_tokens = registry.count_tokens("gpt-4o", "Hello, world!")?;
+let cumulative = registry.estimate_cumulative_token_counts(
+    "gpt-4o",
+    "Hello",
+    &[", world", "!"],
+)?;
+assert_eq!(cumulative.len(), 2);
 
 // Requires `huggingface` feature.
 registry.register_model_file("claude", "/path/to/claude-tokenizer.json")?;

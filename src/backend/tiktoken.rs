@@ -102,6 +102,15 @@ mod tests {
     }
 
     #[test]
+    fn gpt2_uses_r50k_tokenizer() {
+        let backend = TiktokenBackend::from_model("gpt2").expect("gpt2 should load");
+        let count = backend
+            .count_tokens("count me")
+            .expect("count should succeed");
+        assert!(count > 0);
+    }
+
+    #[test]
     fn decode_invalid_token_id_returns_decode_error() {
         let backend = TiktokenBackend::from_model("gpt-4o").expect("backend should load");
         let err = backend
