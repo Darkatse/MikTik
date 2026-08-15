@@ -1,74 +1,36 @@
 use std::path::Path;
 
-use tokenizers::Tokenizer;
+use ::kitoken::Kitoken;
 
+use super::kitoken::KitokenBackend;
 use crate::error::TokenizerError;
-use crate::model::Message;
-use crate::tokenizer::AutoTokenizer;
 
-/// Backend for HuggingFace-compatible tokenizers.
+/// Backend for Hugging Face `tokenizer.json` tokenizers.
 ///
-/// Handles web/fast tokenizer JSON files through the `tokenizers` crate.
-pub struct HuggingFaceBackend {
-    tokenizer: Tokenizer,
-}
+/// The `true` policy keeps added and special tokens active, matching the behavior
+/// encoded by Hugging Face tokenizer definitions.
+pub type HuggingFaceBackend = KitokenBackend<true>;
 
-impl HuggingFaceBackend {
-    /// Load a tokenizer from a tokenizer JSON file path.
-    ///
-    /// The `tokenizers` crate deserializes a full tokenizer pipeline in JSON format.
+impl KitokenBackend<true> {
+    /// Load and convert a Hugging Face tokenizer definition from a file.
     pub fn from_file(path: &Path) -> Result<Self, TokenizerError> {
-        let tokenizer = Tokenizer::from_file(path).map_err(|err| {
+        let tokenizer = Kitoken::from_tokenizers_file(path).map_err(|err| {
             TokenizerError::LoadError(format!(
-                "failed to load HuggingFace tokenizer from '{}': {err}",
+                "failed to load Hugging Face tokenizer from '{}': {err}",
                 path.display()
             ))
         })?;
-        Ok(Self { tokenizer })
+        Ok(Self::new(tokenizer))
     }
 
-    /// Load a tokenizer from tokenizer JSON bytes.
+    /// Load and convert a Hugging Face tokenizer definition from memory.
     pub fn from_bytes(data: &[u8]) -> Result<Self, TokenizerError> {
-        let tokenizer = Tokenizer::from_bytes(data).map_err(|err| {
+        let tokenizer = Kitoken::from_tokenizers_slice(data).map_err(|err| {
             TokenizerError::LoadError(format!(
-                "failed to deserialize HuggingFace tokenizer bytes: {err}"
+                "failed to deserialize Hugging Face tokenizer bytes: {err}"
             ))
         })?;
-        Ok(Self { tokenizer })
-    }
-}
-
-impl AutoTokenizer for HuggingFaceBackend {
-    fn encode(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
-        let encoding = self
-            .tokenizer
-            .encode_fast(text, false)
-            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
-        Ok(encoding.get_ids().to_vec())
-    }
-
-    fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
-        let encoding = self
-            .tokenizer
-            .encode_fast(text, false)
-            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
-        Ok(encoding.get_ids().len())
-    }
-
-    fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
-        self.tokenizer
-            .decode(token_ids, false)
-            .map_err(|err| TokenizerError::DecodeError(err.to_string()))
-    }
-
-    fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {
-        messages.iter().try_fold(0usize, |acc, message| {
-            let encoding = self
-                .tokenizer
-                .encode_fast(message.content.as_str(), false)
-                .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
-            Ok(acc + encoding.get_ids().len())
-        })
+        Ok(Self::new(tokenizer))
     }
 }
 
@@ -77,26 +39,10 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use tokenizers::models::wordlevel::WordLevel;
+    use crate::model::Message;
+    use crate::tokenizer::AutoTokenizer;
 
     use super::*;
-
-    fn test_tokenizer_json() -> String {
-        let vocab = [
-            ("<unk>".to_string(), 0),
-            ("hello".to_string(), 1),
-            ("world".to_string(), 2),
-        ]
-        .into_iter()
-        .collect();
-        let model = WordLevel::builder()
-            .vocab(vocab)
-            .unk_token("<unk>".to_string())
-            .build()
-            .expect("wordlevel model should build");
-        let tokenizer = Tokenizer::new(model);
-        tokenizer.to_string(false).expect("serialize tokenizer")
-    }
 
     fn temp_json_path() -> std::path::PathBuf {
         let nonce = SystemTime::now()
@@ -111,49 +57,38 @@ mod tests {
 
     #[test]
     fn from_bytes_encode_decode_roundtrip() {
-        let json = test_tokenizer_json();
-        let backend = HuggingFaceBackend::from_bytes(json.as_bytes())
-            .expect("backend should load from bytes");
+        let backend =
+            HuggingFaceBackend::from_bytes(crate::backend::TEST_TOKENIZER_JSON.as_bytes())
+                .expect("backend should load from bytes");
 
         let ids = backend.encode("hello").expect("encode should succeed");
-        let count = backend
-            .count_tokens("hello")
-            .expect("count_tokens should succeed");
-        let decoded = backend.decode(&ids).expect("decode should succeed");
-
-        assert_eq!(ids.len(), 1);
-        assert_eq!(count, ids.len());
-        assert_eq!(decoded, "hello");
+        assert_eq!(backend.count_tokens("hello").unwrap(), ids.len());
+        assert_eq!(backend.decode(&ids).unwrap(), "hello");
     }
 
     #[test]
     fn from_file_and_count_messages() {
-        let json = test_tokenizer_json();
         let path = temp_json_path();
-        fs::write(&path, json.as_bytes()).expect("test tokenizer should be written");
+        fs::write(&path, crate::backend::TEST_TOKENIZER_JSON)
+            .expect("test tokenizer should be written");
 
         let backend = HuggingFaceBackend::from_file(&path).expect("backend should load from file");
-        let messages = vec![
+        let messages = [
             Message::new("user", "hello"),
             Message::new("assistant", "world"),
         ];
-        let count = backend
-            .count_messages(&messages)
-            .expect("message counting should succeed");
 
+        let result = backend.count_messages(&messages);
         let _ = fs::remove_file(path);
-        assert_eq!(count, 2);
+        assert_eq!(result.unwrap(), 2);
     }
 
     #[test]
     fn from_invalid_bytes_returns_load_error() {
         let err = match HuggingFaceBackend::from_bytes(b"{not-valid-json") {
-            Ok(_) => panic!("invalid tokenizer json should fail"),
+            Ok(_) => panic!("invalid bytes should fail"),
             Err(err) => err,
         };
-        match err {
-            TokenizerError::LoadError(_) => {}
-            other => panic!("unexpected error type: {other}"),
-        }
+        assert!(matches!(err, TokenizerError::LoadError(_)));
     }
 }

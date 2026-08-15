@@ -1,4 +1,4 @@
-use tiktoken_rs::{CoreBPE, get_bpe_from_model};
+use tiktoken_rs::{CoreBPE, bpe_for_model};
 
 use crate::error::TokenizerError;
 use crate::model::Message;
@@ -6,7 +6,9 @@ use crate::tokenizer::AutoTokenizer;
 
 /// Backend for OpenAI models using the tiktoken BPE tokenizer.
 pub struct TiktokenBackend {
-    bpe: CoreBPE,
+    // tiktoken-rs 0.12 owns each parsed encoding in a process-wide singleton.
+    // Holding its static reference avoids rebuilding large rank tables per registry.
+    bpe: &'static CoreBPE,
     /// Per-message token overhead (e.g., 3 for most GPT models, 4 for gpt-3.5-turbo-0301).
     tokens_per_message: usize,
     /// Extra tokens added at the end of the full prompt (typically 3 for "assistant" priming).
@@ -16,16 +18,11 @@ pub struct TiktokenBackend {
 impl TiktokenBackend {
     /// Create a backend from a tiktoken model name (e.g., `"gpt-4o"`, `"gpt-3.5-turbo"`).
     pub fn from_model(model: &str) -> Result<Self, TokenizerError> {
-        // tiktoken-rs 0.6 resolves O-series by prefix (e.g. "o1-*"), not bare "o1".
-        // We normalize to a compatible model that shares O200k tokenizer.
-        let runtime_model = if model == "o1" { "gpt-4o" } else { model };
-
-        let bpe = get_bpe_from_model(runtime_model).map_err(|err| {
-            TokenizerError::LoadError(format!(
-                "failed to load tiktoken model '{runtime_model}' (from '{model}'): {err}"
-            ))
+        let bpe = bpe_for_model(model).map_err(|err| {
+            TokenizerError::LoadError(format!("failed to load tiktoken model '{model}': {err}"))
         })?;
 
+        // The 0301 snapshot used one extra ChatML framing token per message.
         let tokens_per_message = if model.starts_with("gpt-3.5-turbo-0301") {
             4
         } else {
@@ -45,18 +42,25 @@ impl AutoTokenizer for TiktokenBackend {
         Ok(self.bpe.encode_ordinary(text))
     }
 
+    fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
+        // Use the counting API so future tiktoken-rs releases can optimize it
+        // independently without changing MikTik's backend contract.
+        Ok(self.bpe.count_ordinary(text))
+    }
+
     fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
         self.bpe
-            .decode(token_ids.to_vec())
+            .decode(token_ids)
             .map_err(|err| TokenizerError::DecodeError(err.to_string()))
     }
 
     fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {
+        // ChatML accounting is reply priming plus framing and encoded fields per message.
         let mut total = self.tokens_per_reply;
         for message in messages {
             total += self.tokens_per_message;
-            total += self.bpe.encode_with_special_tokens(&message.role).len();
-            total += self.bpe.encode_with_special_tokens(&message.content).len();
+            total += self.bpe.count_with_special_tokens(&message.role);
+            total += self.bpe.count_with_special_tokens(&message.content);
         }
         Ok(total)
     }

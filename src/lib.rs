@@ -4,8 +4,8 @@
 //!
 //! MikTik provides a single interface to count tokens across different
 //! model families (OpenAI, Claude, LLaMA, Mistral, etc.) by dispatching
-//! to the appropriate backend tokenizer (tiktoken-rs, web tokenizer JSON,
-//! or SentencePiece `.model`).
+//! to `tiktoken-rs` for OpenAI models and Kitoken for Hugging Face JSON or
+//! SentencePiece `.model` tokenizers.
 //!
 //! ## Quick Start
 //!

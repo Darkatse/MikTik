@@ -1,86 +1,47 @@
 use std::path::Path;
 
-use sentencepiece_rs::SentencePieceProcessor;
+use ::kitoken::Kitoken;
 
+use super::kitoken::KitokenBackend;
 use crate::error::TokenizerError;
-use crate::model::Message;
-use crate::tokenizer::AutoTokenizer;
 
 /// Backend for SentencePiece `.model` tokenizers.
 ///
-/// Supports the model type and normalization rules embedded in each model.
-pub struct SentencePieceBackend {
-    tokenizer: SentencePieceProcessor,
-}
+/// The `false` policy leaves SentencePiece control tokens out of ordinary text
+/// encoding and decoding while Kitoken still handles unknown and user-defined pieces.
+pub type SentencePieceBackend = KitokenBackend<false>;
 
-impl SentencePieceBackend {
-    /// Load a SentencePiece tokenizer from a `.model` file.
+impl KitokenBackend<false> {
+    /// Load and convert a serialized SentencePiece model from a file.
     pub fn from_file(path: &Path) -> Result<Self, TokenizerError> {
-        let data = std::fs::read(path).map_err(|err| {
+        let tokenizer = Kitoken::from_sentencepiece_file(path).map_err(|err| {
             TokenizerError::LoadError(format!(
-                "failed to read SentencePiece tokenizer from '{}': {err}",
+                "failed to load SentencePiece tokenizer from '{}': {err}",
                 path.display()
             ))
         })?;
-        Self::from_bytes(&data)
+        Ok(Self::new(tokenizer))
     }
 
-    /// Load a SentencePiece tokenizer from serialized protobuf bytes.
+    /// Load and convert a serialized SentencePiece model from memory.
     pub fn from_bytes(data: &[u8]) -> Result<Self, TokenizerError> {
-        let tokenizer = SentencePieceProcessor::from_serialized_model(data).map_err(|err| {
+        let tokenizer = Kitoken::from_sentencepiece_slice(data).map_err(|err| {
             TokenizerError::LoadError(format!("failed to parse SentencePiece model bytes: {err}"))
         })?;
-        Ok(Self { tokenizer })
-    }
-
-    fn encode_ids(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
-        self.tokenizer
-            .encode_to_ids(text)
-            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?
-            .into_iter()
-            .map(|id| {
-                u32::try_from(id).map_err(|_| {
-                    TokenizerError::EncodeError(format!(
-                        "SentencePiece token id {id} exceeds the supported range"
-                    ))
-                })
-            })
-            .collect()
-    }
-}
-
-impl AutoTokenizer for SentencePieceBackend {
-    fn encode(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
-        self.encode_ids(text)
-    }
-
-    fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
-        self.tokenizer
-            .encode_to_ids(text)
-            .map(|ids| ids.len())
-            .map_err(|err| TokenizerError::EncodeError(err.to_string()))
-    }
-
-    fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
-        let ids = token_ids.iter().map(|&id| id as usize).collect::<Vec<_>>();
-        self.tokenizer
-            .decode_ids(&ids)
-            .map_err(|err| TokenizerError::DecodeError(err.to_string()))
-    }
-
-    fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {
-        messages.iter().try_fold(0usize, |acc, message| {
-            let count = self.count_tokens(message.content.as_str())?;
-            Ok(acc + count)
-        })
+        Ok(Self::new(tokenizer))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::tokenizer::AutoTokenizer;
+
     use super::*;
 
     fn bpe_model_bytes() -> Vec<u8> {
+        // Build the smallest useful SentencePiece ModelProto in place. Keeping this
+        // fixture dependency-free avoids reintroducing a protobuf stack just for tests.
+        // Field numbers below follow sentencepiece_model.proto.
         let pieces = [
             piece("<unk>", 0.0, 2),
             piece("<s>", 0.0, 3),
@@ -96,6 +57,7 @@ mod tests {
         }
 
         let mut trainer = Vec::new();
+        // TrainerSpec.model_type = BPE.
         varint_field(&mut trainer, 3, 2);
         message_field(&mut model, 2, &trainer);
         model
@@ -145,31 +107,21 @@ mod tests {
     }
 
     #[test]
-    fn from_invalid_bytes_returns_load_error() {
+    fn invalid_source_returns_load_error() {
         let err = match SentencePieceBackend::from_bytes(b"not-a-sentencepiece-model") {
             Ok(_) => panic!("invalid bytes should fail"),
             Err(err) => err,
         };
-        match err {
-            TokenizerError::LoadError(_) => {}
-            other => panic!("unexpected error type: {other}"),
-        }
-    }
+        assert!(matches!(err, TokenizerError::LoadError(_)));
 
-    #[test]
-    fn from_missing_file_returns_load_error() {
         let missing = std::env::temp_dir().join("miktik-missing-sentencepiece.model");
         let _ = std::fs::remove_file(&missing);
-
         let err = match SentencePieceBackend::from_file(&missing) {
             Ok(_) => panic!("missing file should fail"),
             Err(err) => err,
         };
-        match err {
-            TokenizerError::LoadError(message) => {
-                assert!(message.contains(&missing.display().to_string()));
-            }
-            other => panic!("unexpected error type: {other}"),
-        }
+        assert!(
+            matches!(err, TokenizerError::LoadError(message) if message.contains(&missing.display().to_string()))
+        );
     }
 }

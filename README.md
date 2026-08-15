@@ -4,8 +4,8 @@ Unified, multi-backend tokenizer library for LLMs, written in Rust.
 
 MikTik provides one interface for token counting across model families:
 - OpenAI models via `tiktoken-rs`
-- Web tokenizer JSON models via `tokenizers`
-- SentencePiece `.model` tokenizers via pure-Rust `sentencepiece-rs`
+- Hugging Face tokenizer JSON models via Kitoken
+- SentencePiece `.model` tokenizers via Kitoken
 
 ## Design Goals
 - Unified API for `encode` / `decode` / token counting
@@ -21,7 +21,7 @@ MikTik provides one interface for token counting across model families:
 miktik = "0.3"
 ```
 
-Default build enables only OpenAI (`tiktoken-rs`) for a minimal footprint.
+The default build enables only OpenAI (`tiktoken-rs`) for a minimal footprint.
 
 Enable additional backends explicitly when needed:
 
@@ -32,8 +32,8 @@ miktik = { version = "0.3", features = ["huggingface", "sentencepiece"] }
 
 Feature matrix:
 - `openai` (default): OpenAI-compatible counting via `tiktoken-rs`
-- `huggingface`: tokenizer JSON loading via `tokenizers`
-- `sentencepiece`: SentencePiece `.model` loading (`huggingface` implied)
+- `huggingface`: Hugging Face tokenizer JSON loading via Kitoken
+- `sentencepiece`: SentencePiece `.model` loading via Kitoken
 - `full`: convenience bundle (`openai + huggingface + sentencepiece`)
 
 ## Quick Start

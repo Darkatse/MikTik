@@ -615,29 +615,11 @@ mod tests {
     #[cfg(feature = "huggingface")]
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[cfg(feature = "huggingface")]
-    use tokenizers::Tokenizer;
-    #[cfg(feature = "huggingface")]
-    use tokenizers::models::wordlevel::WordLevel;
-
     use super::*;
 
     #[cfg(feature = "huggingface")]
     fn test_tokenizer_json() -> String {
-        let vocab = [
-            ("<unk>".to_string(), 0),
-            ("hello".to_string(), 1),
-            ("world".to_string(), 2),
-        ]
-        .into_iter()
-        .collect();
-        let model = WordLevel::builder()
-            .vocab(vocab)
-            .unk_token("<unk>".to_string())
-            .build()
-            .expect("wordlevel model should build");
-        let tokenizer = Tokenizer::new(model);
-        tokenizer.to_string(false).expect("serialize tokenizer")
+        crate::backend::TEST_TOKENIZER_JSON.to_string()
     }
 
     #[cfg(feature = "huggingface")]
