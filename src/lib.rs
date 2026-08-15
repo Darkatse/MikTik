@@ -17,7 +17,12 @@
 //! // Count tokens in plain text
 //! let count = registry.count_tokens("gpt-4o", "Hello, world!").unwrap();
 //! let cumulative = registry
-//!     .estimate_cumulative_token_counts("gpt-4o", "Hello", &[", world", "!"])
+//!     .estimate_cumulative_token_counts(
+//!         "gpt-4o",
+//!         "Hello",
+//!         &[", world", "!"],
+//!         Default::default(),
+//!     )
 //!     .unwrap();
 //! assert_eq!(cumulative.len(), 2);
 //!
@@ -42,4 +47,4 @@ pub mod tokenizer;
 pub use error::TokenizerError;
 pub use model::Message;
 pub use registry::TokenizerRegistry;
-pub use tokenizer::AutoTokenizer;
+pub use tokenizer::{AutoTokenizer, CumulativeEstimateOptions};

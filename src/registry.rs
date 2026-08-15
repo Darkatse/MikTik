@@ -11,7 +11,7 @@ use crate::backend::sentencepiece::SentencePieceBackend;
 use crate::backend::tiktoken::TiktokenBackend;
 use crate::error::TokenizerError;
 use crate::model::Message;
-use crate::tokenizer::AutoTokenizer;
+use crate::tokenizer::{AutoTokenizer, CumulativeEstimateOptions};
 
 type ModelResolver = fn(&str) -> Option<&'static str>;
 type ModelLoader = fn(&ModelSource) -> Result<Box<dyn AutoTokenizer>, TokenizerError>;
@@ -443,9 +443,10 @@ impl TokenizerRegistry {
         model: &str,
         base: &str,
         additions: &[&str],
+        options: CumulativeEstimateOptions,
     ) -> Result<Vec<usize>, TokenizerError> {
         self.get(model)?
-            .estimate_cumulative_token_counts(base, additions)
+            .estimate_cumulative_token_counts(base, additions, options)
     }
 
     pub fn estimate_cumulative_token_counts_canonical(
@@ -453,9 +454,10 @@ impl TokenizerRegistry {
         canonical: &str,
         base: &str,
         additions: &[&str],
+        options: CumulativeEstimateOptions,
     ) -> Result<Vec<usize>, TokenizerError> {
         self.get_canonical(canonical)?
-            .estimate_cumulative_token_counts(base, additions)
+            .estimate_cumulative_token_counts(base, additions, options)
     }
 
     /// Convenience: count tokens for a list of chat messages.
@@ -752,7 +754,12 @@ mod tests {
         let additions = ["First entry.\n", "第二条目。\n", "Spaces  \n🙂\n"];
 
         let estimates = registry
-            .estimate_cumulative_token_counts("gpt-4o", &base, &additions)
+            .estimate_cumulative_token_counts(
+                "gpt-4o",
+                &base,
+                &additions,
+                CumulativeEstimateOptions::default(),
+            )
             .expect("cumulative estimate should succeed");
 
         let mut text = base;
@@ -810,7 +817,12 @@ mod tests {
             .count_tokens("claude", "hello")
             .expect("counting should succeed");
         let cumulative = registry
-            .estimate_cumulative_token_counts("claude", "", &["hello", "world"])
+            .estimate_cumulative_token_counts(
+                "claude",
+                "",
+                &["hello", "world"],
+                CumulativeEstimateOptions::default(),
+            )
             .expect("cumulative estimate should succeed");
         assert_eq!(count, 1);
         assert_eq!(cumulative, vec![1, 1]);

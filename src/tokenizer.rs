@@ -1,14 +1,33 @@
 use crate::error::TokenizerError;
 use crate::model::Message;
 
-const CUMULATIVE_ESTIMATE_CONTEXT_BYTES: usize = 256;
+const DEFAULT_CUMULATIVE_ESTIMATE_CONTEXT_BYTES: usize = 256;
 
-fn trailing_context(text: &str) -> &str {
-    let mut start = text.len().saturating_sub(CUMULATIVE_ESTIMATE_CONTEXT_BYTES);
+fn trailing_context(text: &str, context_bytes: usize) -> &str {
+    let mut start = text.len().saturating_sub(context_bytes);
     while !text.is_char_boundary(start) {
         start += 1;
     }
     &text[start..]
+}
+
+/// Controls the speed and stopping behavior of cumulative token estimates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CumulativeEstimateOptions {
+    /// Maximum trailing UTF-8 bytes retained across additions.
+    pub context_bytes: usize,
+    /// Stops encoding after the first estimate at or above this token count.
+    /// Remaining result slots are filled with the terminal estimate.
+    pub stop_at: Option<usize>,
+}
+
+impl Default for CumulativeEstimateOptions {
+    fn default() -> Self {
+        Self {
+            context_bytes: DEFAULT_CUMULATIVE_ESTIMATE_CONTEXT_BYTES,
+            stop_at: None,
+        }
+    }
 }
 
 fn apply_count_delta(
@@ -63,13 +82,14 @@ pub trait AutoTokenizer: Send + Sync {
         &self,
         base: &str,
         additions: &[&str],
+        options: CumulativeEstimateOptions,
     ) -> Result<Vec<usize>, TokenizerError> {
         if additions.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut total = self.count_tokens(base)?;
-        let initial_context = trailing_context(base);
+        let initial_context = trailing_context(base, options.context_bytes);
         let mut context_count = if initial_context.len() == base.len() {
             total
         } else {
@@ -79,19 +99,21 @@ pub trait AutoTokenizer: Send + Sync {
         let mut counts = Vec::with_capacity(additions.len());
 
         for addition in additions {
-            if addition.is_empty() {
-                counts.push(total);
-                continue;
+            if !addition.is_empty() {
+                context.push_str(addition);
+                let next_context_count = self.count_tokens(&context)?;
+                total = apply_count_delta(total, context_count, next_context_count)?;
+                context_count = next_context_count;
             }
 
-            context.push_str(addition);
-            let next_context_count = self.count_tokens(&context)?;
-            total = apply_count_delta(total, context_count, next_context_count)?;
             counts.push(total);
-            context_count = next_context_count;
+            if options.stop_at.is_some_and(|limit| total >= limit) {
+                counts.resize(additions.len(), total);
+                break;
+            }
 
-            if context.len() > CUMULATIVE_ESTIMATE_CONTEXT_BYTES * 2 {
-                context = trailing_context(&context).to_string();
+            if context.len() > options.context_bytes.saturating_mul(2) {
+                context = trailing_context(&context, options.context_bytes).to_string();
                 context_count = self.count_tokens(&context)?;
             }
         }
@@ -108,6 +130,8 @@ pub trait AutoTokenizer: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     struct CharacterTokenizer;
@@ -147,7 +171,11 @@ mod tests {
         let additions = ["界", "", "🙂", "\ne\u{301}"];
 
         let counts = tokenizer
-            .estimate_cumulative_token_counts(&base, &additions)
+            .estimate_cumulative_token_counts(
+                &base,
+                &additions,
+                CumulativeEstimateOptions::default(),
+            )
             .expect("cumulative estimate should succeed");
 
         assert_eq!(counts, vec![201, 201, 202, 205]);
@@ -172,9 +200,59 @@ mod tests {
         }
 
         let counts = FailingTokenizer
-            .estimate_cumulative_token_counts("ignored", &[])
+            .estimate_cumulative_token_counts("ignored", &[], CumulativeEstimateOptions::default())
             .expect("empty input should not tokenize");
 
         assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn cumulative_options_bound_context_and_stop_future_encoding() {
+        struct RecordingTokenizer(Mutex<Vec<String>>);
+
+        impl AutoTokenizer for RecordingTokenizer {
+            fn encode(&self, _: &str) -> Result<Vec<u32>, TokenizerError> {
+                unreachable!()
+            }
+
+            fn decode(&self, _: &[u32]) -> Result<String, TokenizerError> {
+                unreachable!()
+            }
+
+            fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
+                self.0.lock().unwrap().push(text.to_string());
+                Ok(text.chars().count())
+            }
+
+            fn count_messages(&self, _: &[Message]) -> Result<usize, TokenizerError> {
+                unreachable!()
+            }
+        }
+
+        assert_eq!(
+            CumulativeEstimateOptions::default(),
+            CumulativeEstimateOptions {
+                context_bytes: 256,
+                stop_at: None,
+            }
+        );
+
+        let tokenizer = RecordingTokenizer(Mutex::new(Vec::new()));
+        let counts = tokenizer
+            .estimate_cumulative_token_counts(
+                "abcdef",
+                &["g", "h", "i"],
+                CumulativeEstimateOptions {
+                    context_bytes: 2,
+                    stop_at: Some(8),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(counts, vec![7, 8, 8]);
+        assert_eq!(
+            *tokenizer.0.lock().unwrap(),
+            ["abcdef", "ef", "efg", "efgh"]
+        );
     }
 }

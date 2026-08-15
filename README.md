@@ -18,7 +18,7 @@ MikTik provides one interface for token counting across model families:
 
 ```toml
 [dependencies]
-miktik = "0.3"
+miktik = "0.4"
 ```
 
 The default build enables only OpenAI (`tiktoken-rs`) for a minimal footprint.
@@ -27,7 +27,7 @@ Enable additional backends explicitly when needed:
 
 ```toml
 [dependencies]
-miktik = { version = "0.3", features = ["huggingface", "sentencepiece"] }
+miktik = { version = "0.4", features = ["huggingface", "sentencepiece"] }
 ```
 
 Feature matrix:
@@ -48,6 +48,7 @@ let cumulative = registry.estimate_cumulative_token_counts(
     "gpt-4o",
     "Hello",
     &[", world", "!"],
+    Default::default(),
 )?;
 assert_eq!(cumulative.len(), 2);
 
@@ -62,6 +63,11 @@ let chat_tokens = registry.count_messages(
 )?;
 # Ok::<(), miktik::TokenizerError>(())
 ```
+
+`CumulativeEstimateOptions::default()` retains 256 trailing bytes and does not
+stop early. Performance-sensitive callers can select a smaller window and set
+`stop_at`; once reached, MikTik skips later encoding and fills the remaining
+result slots with the terminal estimate.
 
 ## Model Resolution
 
