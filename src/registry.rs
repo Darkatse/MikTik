@@ -35,13 +35,22 @@ const HUGGINGFACE_MODELS: &[&str] = &[
     "gemma",
     "jamba",
     "nerdstash",
+    "nerdstash_v2",
     "command-r",
     "command-a",
     "qwen2",
     "nemo",
     "deepseek",
 ];
-const SENTENCEPIECE_MODELS: &[&str] = &["llama", "mistral", "yi", "gemma", "jamba", "nerdstash"];
+const SENTENCEPIECE_MODELS: &[&str] = &[
+    "llama",
+    "mistral",
+    "yi",
+    "gemma",
+    "jamba",
+    "nerdstash",
+    "nerdstash_v2",
+];
 const WEB_TOKENIZER_MODELS: &[&str] = &[
     "claude",
     "llama3",
@@ -68,6 +77,8 @@ const SENTENCEPIECE_ALIASES: &[(&str, &str)] = &[
     ("gemini", "gemma"),
     ("learnlm", "gemma"),
     ("jamba", "jamba"),
+    ("nerdstash-v2", "nerdstash_v2"),
+    ("nerdstash_v2", "nerdstash_v2"),
     ("nerdstash", "nerdstash"),
 ];
 const HF_JSON_ALIASES: &[(&str, &str)] = &[
@@ -319,6 +330,7 @@ impl TokenizerRegistry {
             "gemma" => Some("gemma"),
             "jamba" => Some("jamba"),
             "nerdstash" => Some("nerdstash"),
+            "nerdstash-v2" | "nerdstash_v2" => Some("nerdstash_v2"),
             "command-r" => Some("command-r"),
             "command-a" => Some("command-a"),
             "qwen2" => Some("qwen2"),
@@ -697,8 +709,38 @@ mod tests {
         assert_eq!(TokenizerRegistry::resolve_model("learnlm-pro"), "gemma");
         assert_eq!(
             TokenizerRegistry::resolve_model("nerdstash-v2"),
+            "nerdstash_v2"
+        );
+        assert_eq!(
+            TokenizerRegistry::resolve_model("nerdstash_v2-tokenizer"),
+            "nerdstash_v2"
+        );
+        assert_eq!(
+            TokenizerRegistry::resolve_model("nerdstash-v1"),
             "nerdstash"
         );
+    }
+
+    #[test]
+    #[cfg(feature = "huggingface")]
+    fn nerdstash_versions_keep_registered_resources_separate() {
+        let registry = TokenizerRegistry::new();
+        registry
+            .register_model_bytes("nerdstash-v2", test_tokenizer_json().into_bytes())
+            .expect("v2 resource registration should succeed");
+
+        assert_eq!(
+            registry
+                .count_tokens("nerdstash_v2", "hello")
+                .expect("v2 counting should succeed"),
+            1
+        );
+
+        let err = match registry.get("nerdstash") {
+            Ok(_) => panic!("v1 should not reuse the registered v2 resource"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, TokenizerError::ModelNotFound(_)));
     }
 
     #[test]
