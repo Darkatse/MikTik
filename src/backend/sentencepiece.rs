@@ -1,10 +1,6 @@
 use std::path::Path;
 
-use sentencepiece_model::SentencePieceModel;
-use tokenizers::Tokenizer;
-use tokenizers::models::unigram::Unigram;
-use tokenizers::normalizers::precompiled::Precompiled;
-use tokenizers::pre_tokenizers::metaspace::{Metaspace, PrependScheme};
+use sentencepiece_rs::SentencePieceProcessor;
 
 use crate::error::TokenizerError;
 use crate::model::Message;
@@ -12,11 +8,9 @@ use crate::tokenizer::AutoTokenizer;
 
 /// Backend for SentencePiece `.model` tokenizers.
 ///
-/// This backend parses SentencePiece protobuf models and materializes a
-/// `tokenizers::Tokenizer` with a Unigram model and SentencePiece-compatible
-/// metaspace preprocessing.
+/// Supports the model type and normalization rules embedded in each model.
 pub struct SentencePieceBackend {
-    tokenizer: Tokenizer,
+    tokenizer: SentencePieceProcessor,
 }
 
 impl SentencePieceBackend {
@@ -33,98 +27,51 @@ impl SentencePieceBackend {
 
     /// Load a SentencePiece tokenizer from serialized protobuf bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self, TokenizerError> {
-        let sp_model = SentencePieceModel::from_slice(data).map_err(|err| {
+        let tokenizer = SentencePieceProcessor::from_serialized_model(data).map_err(|err| {
             TokenizerError::LoadError(format!("failed to parse SentencePiece model bytes: {err}"))
         })?;
-        let tokenizer = build_tokenizer(&sp_model)?;
         Ok(Self { tokenizer })
     }
-}
 
-fn build_tokenizer(sp_model: &SentencePieceModel) -> Result<Tokenizer, TokenizerError> {
-    let vocab = sp_model
-        .pieces()
-        .iter()
-        .map(|piece| {
-            (
-                piece.piece.clone().unwrap_or_default(),
-                f64::from(piece.score.unwrap_or(0.0)),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let trainer = sp_model.trainer();
-    let unk_id = trainer
-        .and_then(|spec| spec.unk_id)
-        .and_then(|id| (id >= 0).then_some(id as usize));
-    let byte_fallback = trainer.and_then(|spec| spec.byte_fallback).unwrap_or(false);
-
-    let model = Unigram::from(vocab, unk_id, byte_fallback).map_err(|err| {
-        TokenizerError::LoadError(format!(
-            "failed to build unigram model from SentencePiece: {err}"
-        ))
-    })?;
-
-    let mut tokenizer = Tokenizer::new(model);
-
-    if let Some(precompiled_map) = sp_model
-        .normalizer()
-        .and_then(|spec| spec.precompiled_charsmap.as_ref())
-        .filter(|bytes| !bytes.is_empty())
-    {
-        let precompiled = Precompiled::from(precompiled_map).map_err(|err| {
-            TokenizerError::LoadError(format!(
-                "failed to load SentencePiece precompiled normalizer: {err}"
-            ))
-        })?;
-        tokenizer.with_normalizer(Some(precompiled));
+    fn encode_ids(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
+        self.tokenizer
+            .encode_to_ids(text)
+            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?
+            .into_iter()
+            .map(|id| {
+                u32::try_from(id).map_err(|_| {
+                    TokenizerError::EncodeError(format!(
+                        "SentencePiece token id {id} exceeds the supported range"
+                    ))
+                })
+            })
+            .collect()
     }
-
-    let prepend_scheme = match sp_model
-        .normalizer()
-        .and_then(|spec| spec.add_dummy_prefix)
-        .unwrap_or(true)
-    {
-        true => PrependScheme::Always,
-        false => PrependScheme::Never,
-    };
-    let metaspace = Metaspace::new('\u{2581}', prepend_scheme, true);
-    tokenizer.with_pre_tokenizer(Some(metaspace.clone()));
-    tokenizer.with_decoder(Some(metaspace));
-
-    Ok(tokenizer)
 }
 
 impl AutoTokenizer for SentencePieceBackend {
     fn encode(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
-        let encoding = self
-            .tokenizer
-            .encode_fast(text, false)
-            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
-        Ok(encoding.get_ids().to_vec())
+        self.encode_ids(text)
     }
 
     fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
-        let encoding = self
-            .tokenizer
-            .encode_fast(text, false)
-            .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
-        Ok(encoding.get_ids().len())
+        self.tokenizer
+            .encode_to_ids(text)
+            .map(|ids| ids.len())
+            .map_err(|err| TokenizerError::EncodeError(err.to_string()))
     }
 
     fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
+        let ids = token_ids.iter().map(|&id| id as usize).collect::<Vec<_>>();
         self.tokenizer
-            .decode(token_ids, false)
+            .decode_ids(&ids)
             .map_err(|err| TokenizerError::DecodeError(err.to_string()))
     }
 
     fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {
         messages.iter().try_fold(0usize, |acc, message| {
-            let encoding = self
-                .tokenizer
-                .encode_fast(message.content.as_str(), false)
-                .map_err(|err| TokenizerError::EncodeError(err.to_string()))?;
-            Ok(acc + encoding.get_ids().len())
+            let count = self.count_tokens(message.content.as_str())?;
+            Ok(acc + count)
         })
     }
 }
@@ -132,6 +79,70 @@ impl AutoTokenizer for SentencePieceBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bpe_model_bytes() -> Vec<u8> {
+        let pieces = [
+            piece("<unk>", 0.0, 2),
+            piece("<s>", 0.0, 3),
+            piece("</s>", 0.0, 3),
+            piece("▁", 0.0, 1),
+            piece("a", 0.0, 1),
+            piece("b", 0.0, 1),
+            piece("ab", 10.0, 1),
+        ];
+        let mut model = Vec::new();
+        for value in pieces {
+            message_field(&mut model, 1, &value);
+        }
+
+        let mut trainer = Vec::new();
+        varint_field(&mut trainer, 3, 2);
+        message_field(&mut model, 2, &trainer);
+        model
+    }
+
+    fn piece(text: &str, score: f32, kind: u64) -> Vec<u8> {
+        let mut value = Vec::new();
+        message_field(&mut value, 1, text.as_bytes());
+        key(&mut value, 2, 5);
+        value.extend_from_slice(&score.to_bits().to_le_bytes());
+        varint_field(&mut value, 3, kind);
+        value
+    }
+
+    fn message_field(output: &mut Vec<u8>, field: u32, value: &[u8]) {
+        key(output, field, 2);
+        varint(output, value.len() as u64);
+        output.extend_from_slice(value);
+    }
+
+    fn varint_field(output: &mut Vec<u8>, field: u32, value: u64) {
+        key(output, field, 0);
+        varint(output, value);
+    }
+
+    fn key(output: &mut Vec<u8>, field: u32, wire_type: u8) {
+        varint(output, ((field as u64) << 3) | u64::from(wire_type));
+    }
+
+    fn varint(output: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            output.push((value as u8) | 0x80);
+            value >>= 7;
+        }
+        output.push(value as u8);
+    }
+
+    #[test]
+    fn bpe_model_uses_bpe_merges() {
+        let tokenizer =
+            SentencePieceBackend::from_bytes(&bpe_model_bytes()).expect("BPE model should load");
+
+        let ids = tokenizer.encode("ab").expect("text should encode");
+        assert_eq!(ids, [3, 6]);
+        assert_eq!(tokenizer.count_tokens("ab").unwrap(), 2);
+        assert_eq!(tokenizer.decode(&ids).unwrap(), "ab");
+    }
 
     #[test]
     fn from_invalid_bytes_returns_load_error() {

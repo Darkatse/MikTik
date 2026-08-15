@@ -1,6 +1,6 @@
 [package]
 name = "miktik"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.85"
 description = "A unified, multi-backend tokenizer library for LLMs"
@@ -17,13 +17,13 @@ exclude = [".local/**", "scripts/**", "tests/**", "Cargo.lock"]
 default = ["openai"]
 openai = ["dep:tiktoken-rs"]
 huggingface = ["dep:tokenizers"]
-sentencepiece = ["huggingface", "dep:sentencepiece-model"]
+sentencepiece = ["huggingface", "dep:sentencepiece-rs"]
 full = ["openai", "huggingface", "sentencepiece"]
 
 [dependencies]
 tiktoken-rs = { version = "0.9.1", optional = true }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
-sentencepiece-model = { version = "0.1.4", optional = true }
+sentencepiece-rs = { version = "0.2.2", optional = true }
 thiserror = "2"
 
 [profile.dev.package.tokenizers]
@@ -32,7 +32,7 @@ opt-level = 3
 [profile.dev.package."tiktoken-rs"]
 opt-level = 3
 
-[profile.dev.package."sentencepiece-model"]
+[profile.dev.package."sentencepiece-rs"]
 opt-level = 3
 
 [profile.test.package.tokenizers]
@@ -41,5 +41,5 @@ opt-level = 3
 [profile.test.package."tiktoken-rs"]
 opt-level = 3
 
-[profile.test.package."sentencepiece-model"]
+[profile.test.package."sentencepiece-rs"]
 opt-level = 3
