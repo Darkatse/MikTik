@@ -1,7 +1,11 @@
 #[cfg(feature = "huggingface")]
 pub mod huggingface;
 // External formats use the same runtime adapter; their public modules only own conversion.
-#[cfg(any(feature = "huggingface", feature = "sentencepiece", feature = "tiktoken-bpe"))]
+#[cfg(any(
+    feature = "huggingface",
+    feature = "sentencepiece",
+    feature = "tiktoken-bpe"
+))]
 mod kitoken;
 #[cfg(feature = "sentencepiece")]
 pub mod sentencepiece;
