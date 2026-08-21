@@ -1,12 +1,14 @@
 #[cfg(feature = "huggingface")]
 pub mod huggingface;
-// Both external formats use the same runtime adapter; their public modules only own conversion.
-#[cfg(any(feature = "huggingface", feature = "sentencepiece"))]
+// External formats use the same runtime adapter; their public modules only own conversion.
+#[cfg(any(feature = "huggingface", feature = "sentencepiece", feature = "tiktoken-bpe"))]
 mod kitoken;
 #[cfg(feature = "sentencepiece")]
 pub mod sentencepiece;
 #[cfg(feature = "openai")]
 pub mod tiktoken;
+#[cfg(feature = "tiktoken-bpe")]
+pub mod tiktoken_bpe;
 
 #[cfg(all(test, feature = "huggingface"))]
 pub(crate) const TEST_TOKENIZER_JSON: &str = r###"{
