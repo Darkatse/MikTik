@@ -9,6 +9,8 @@ use crate::backend::huggingface::HuggingFaceBackend;
 use crate::backend::sentencepiece::SentencePieceBackend;
 #[cfg(feature = "openai")]
 use crate::backend::tiktoken::TiktokenBackend;
+#[cfg(feature = "tiktoken-bpe")]
+use crate::backend::tiktoken_bpe::TiktokenBpeBackend;
 use crate::error::TokenizerError;
 use crate::model::Message;
 use crate::tokenizer::{AutoTokenizer, CumulativeEstimateOptions};
@@ -26,6 +28,9 @@ const TIKTOKEN_MODELS: &[&str] = &[
     "gpt-3.5-turbo-0301",
     "gpt2",
 ];
+/// Models that ship a raw tiktoken BPE rank file (e.g. `tiktoken.model`)
+/// instead of a Hugging Face `tokenizer.json`.
+const TIKTOKEN_BPE_MODELS: &[&str] = &["kimi"];
 const HUGGINGFACE_MODELS: &[&str] = &[
     "claude",
     "llama3",
@@ -64,6 +69,9 @@ const O_SERIES_PREFIXES: &[&str] = &["o1", "o3", "o4", "gpt-5"];
 const GPT4_FAMILY_MATCHERS: &[&str] = &["gpt-4", "chatgpt-4o"];
 const GPT4O_MATCHERS: &[&str] = &["4o", "4.1", "4.5", "chatgpt-4o"];
 const CLAUDE_ALIASES: &[(&str, &str)] = &[("claude", "claude")];
+// All Moonshot Kimi releases (K2 through K3) share one byte-identical
+// tiktoken BPE vocab, so every "kimi" model id resolves to "kimi".
+const KIMI_ALIASES: &[(&str, &str)] = &[("kimi", "kimi")];
 const LLAMA_ALIASES: &[(&str, &str)] = &[
     // Keep llama3 ahead of llama to preserve priority.
     ("llama3", "llama3"),
@@ -92,6 +100,7 @@ const MODEL_RESOLUTION_CHAIN: &[ModelResolver] = &[
     resolve_o_series,
     resolve_gpt4_family,
     resolve_claude,
+    resolve_kimi,
     resolve_llama_family,
     resolve_sentencepiece_family,
     resolve_hf_json_family,
@@ -135,6 +144,11 @@ fn resolve_claude(name: &str) -> Option<&'static str> {
     resolve_from_contains_aliases(name, CLAUDE_ALIASES)
 }
 
+fn resolve_kimi(name: &str) -> Option<&'static str> {
+    resolve_from_contains_aliases(name, KIMI_ALIASES)
+        .or_else(|| (name == "k3" || name.starts_with("k3-")).then_some("kimi"))
+}
+
 fn resolve_llama_family(name: &str) -> Option<&'static str> {
     resolve_from_contains_aliases(name, LLAMA_ALIASES)
 }
@@ -148,7 +162,11 @@ fn resolve_hf_json_family(name: &str) -> Option<&'static str> {
 }
 
 #[cfg_attr(
-    not(any(feature = "huggingface", feature = "sentencepiece")),
+    not(any(
+        feature = "huggingface",
+        feature = "sentencepiece",
+        feature = "tiktoken-bpe"
+    )),
     allow(dead_code)
 )]
 #[derive(Clone, Debug)]
@@ -169,6 +187,10 @@ pub struct TokenizerRegistry {
 impl TokenizerRegistry {
     pub fn supported_tiktoken_models() -> &'static [&'static str] {
         TIKTOKEN_MODELS
+    }
+
+    pub fn supported_tiktoken_bpe_models() -> &'static [&'static str] {
+        TIKTOKEN_BPE_MODELS
     }
 
     pub fn supported_huggingface_models() -> &'static [&'static str] {
@@ -193,7 +215,8 @@ impl TokenizerRegistry {
 
     /// Register a tokenizer model file path for a model family.
     ///
-    /// Supports both web tokenizer JSON files and SentencePiece `.model` files.
+    /// Supports web tokenizer JSON files, SentencePiece `.model` files, and
+    /// tiktoken BPE rank files (e.g. Kimi's `tiktoken.model`).
     pub fn register_model_file(
         &self,
         model: &str,
@@ -204,7 +227,8 @@ impl TokenizerRegistry {
 
     /// Register raw tokenizer bytes for a model family.
     ///
-    /// Supports tokenizer JSON payloads and SentencePiece serialized protobuf bytes.
+    /// Supports tokenizer JSON payloads, SentencePiece serialized protobuf
+    /// bytes, and tiktoken BPE rank payloads (e.g. Kimi's `tiktoken.model`).
     pub fn register_model_bytes(
         &self,
         model: &str,
@@ -243,16 +267,24 @@ impl TokenizerRegistry {
         model: &str,
         source: ModelSource,
     ) -> Result<(), TokenizerError> {
-        if !Self::supports_non_openai_backends() {
-            return Err(TokenizerError::LoadError(
-                "non-OpenAI backends are disabled at compile time; enable feature 'huggingface' or 'sentencepiece'".to_string(),
-            ));
-        }
-
         let canonical = Self::resolve_model_ref(model);
-        if !Self::is_huggingface_model_canonical(canonical) {
+
+        // Each file-backed family gates registration on its own compile-time
+        // feature. Everything else (built-in tiktoken encodings, unknown
+        // models) accepts no resource and fails fast with the reason.
+        if Self::is_huggingface_model_canonical(canonical) {
+            if !Self::supports_huggingface_family_backends() {
+                return Err(TokenizerError::LoadError(format!(
+                    "HuggingFace-family backends for '{canonical}' are disabled at compile time; enable feature 'huggingface' or 'sentencepiece'"
+                )));
+            }
+        } else if Self::is_tiktoken_bpe_model_canonical(canonical) {
+            if !cfg!(feature = "tiktoken-bpe") {
+                return Err(Self::disabled_backend_error(canonical, "tiktoken-bpe"));
+            }
+        } else {
             return Err(TokenizerError::ModelNotFound(format!(
-                "model '{model}' resolves to '{canonical}', which is not a HuggingFace-backed model"
+                "model '{model}' resolves to '{canonical}', which does not accept registered tokenizer resources"
             )));
         }
 
@@ -344,6 +376,10 @@ impl TokenizerRegistry {
         Self::is_tiktoken_model_canonical(Self::resolve_model_ref(model))
     }
 
+    pub fn is_tiktoken_bpe_model(model: &str) -> bool {
+        Self::is_tiktoken_bpe_model_canonical(Self::resolve_model_ref(model))
+    }
+
     pub fn is_huggingface_model(model: &str) -> bool {
         Self::is_huggingface_model_canonical(Self::resolve_model_ref(model))
     }
@@ -360,6 +396,10 @@ impl TokenizerRegistry {
         TIKTOKEN_MODELS.contains(&canonical)
     }
 
+    fn is_tiktoken_bpe_model_canonical(canonical: &str) -> bool {
+        TIKTOKEN_BPE_MODELS.contains(&canonical)
+    }
+
     fn is_huggingface_model_canonical(canonical: &str) -> bool {
         HUGGINGFACE_MODELS.contains(&canonical)
     }
@@ -372,7 +412,7 @@ impl TokenizerRegistry {
         WEB_TOKENIZER_MODELS.contains(&canonical)
     }
 
-    fn supports_non_openai_backends() -> bool {
+    fn supports_huggingface_family_backends() -> bool {
         cfg!(any(feature = "huggingface", feature = "sentencepiece"))
     }
 
@@ -489,8 +529,18 @@ impl TokenizerRegistry {
                 return Err(Self::disabled_backend_error(canonical, "openai"));
             }
         }
+        if Self::is_tiktoken_bpe_model_canonical(canonical) {
+            #[cfg(feature = "tiktoken-bpe")]
+            {
+                return self.load_tiktoken_bpe_tokenizer(canonical);
+            }
+            #[cfg(not(feature = "tiktoken-bpe"))]
+            {
+                return Err(Self::disabled_backend_error(canonical, "tiktoken-bpe"));
+            }
+        }
         if Self::is_huggingface_model_canonical(canonical) {
-            return self.load_non_openai_tokenizer(canonical);
+            return self.load_huggingface_family_tokenizer(canonical);
         }
 
         Err(TokenizerError::ModelNotFound(format!(
@@ -498,11 +548,36 @@ impl TokenizerRegistry {
         )))
     }
 
-    fn load_non_openai_tokenizer(
+    #[cfg(feature = "tiktoken-bpe")]
+    fn load_tiktoken_bpe_tokenizer(
         &self,
         canonical: &str,
     ) -> Result<Box<dyn AutoTokenizer>, TokenizerError> {
-        if !Self::supports_non_openai_backends() {
+        let source = {
+            let sources = self.model_sources.read().map_err(|e| {
+                TokenizerError::LoadError(format!("model source lock poisoned: {e}"))
+            })?;
+            sources.get(canonical).cloned()
+        };
+
+        let source = source.ok_or_else(|| {
+            TokenizerError::ModelNotFound(format!(
+                "tokenizer resource is not registered for canonical model '{canonical}'"
+            ))
+        })?;
+
+        let backend = match &source {
+            ModelSource::File(path) => TiktokenBpeBackend::from_bpe_file(path)?,
+            ModelSource::Bytes(bytes) => TiktokenBpeBackend::from_bpe_bytes(bytes.as_ref())?,
+        };
+        Ok(Box::new(backend))
+    }
+
+    fn load_huggingface_family_tokenizer(
+        &self,
+        canonical: &str,
+    ) -> Result<Box<dyn AutoTokenizer>, TokenizerError> {
+        if !Self::supports_huggingface_family_backends() {
             return Err(Self::disabled_backend_error(
                 canonical,
                 "huggingface or sentencepiece",
@@ -546,7 +621,7 @@ impl TokenizerRegistry {
         }
 
         Err(TokenizerError::ModelNotFound(format!(
-            "no non-OpenAI backend family is configured for canonical model '{canonical}'"
+            "no HuggingFace-family loader is configured for canonical model '{canonical}'"
         )))
     }
 
@@ -774,7 +849,7 @@ mod tests {
 
     #[test]
     #[cfg(not(any(feature = "huggingface", feature = "sentencepiece")))]
-    fn non_openai_models_report_disabled_feature_error() {
+    fn huggingface_family_models_report_disabled_feature_error() {
         let registry = TokenizerRegistry::new();
         let err = registry
             .count_tokens("claude-3-5-sonnet", "hello")
@@ -858,10 +933,77 @@ mod tests {
 
         match err {
             TokenizerError::ModelNotFound(message) => {
-                assert!(message.contains("not a HuggingFace-backed model"));
+                assert!(message.contains("does not accept registered tokenizer resources"));
             }
             other => panic!("unexpected error type: {other}"),
         }
+    }
+
+    #[test]
+    fn resolve_model_maps_kimi_aliases() {
+        for model in [
+            "kimi",
+            "kimi-k3",
+            "Kimi-K2.7-Code",
+            "kimi-k2.5-0905-preview",
+            "moonshotai/kimi-k2.6",
+            "kimi-latest",
+            "kimi-for-coding",
+            "k3-256k",
+        ] {
+            assert_eq!(
+                TokenizerRegistry::resolve_model(model),
+                "kimi",
+                "model '{model}' should resolve to the kimi tokenizer"
+            );
+        }
+        assert!(TokenizerRegistry::is_tiktoken_bpe_model("kimi-k3"));
+        assert!(!TokenizerRegistry::is_tiktoken_bpe_model("gpt-4o"));
+        // Intentionally invalid ID: xAI's retired model ID is `grok-3`, not `grok3`.
+        assert!(!TokenizerRegistry::is_tiktoken_bpe_model("grok3"));
+        assert!(!TokenizerRegistry::is_tiktoken_bpe_model("work3"));
+    }
+
+    #[test]
+    #[cfg(feature = "tiktoken-bpe")]
+    fn unregistered_kimi_resource_returns_explicit_error() {
+        let registry = TokenizerRegistry::new();
+        let err = match registry.get("kimi-k3") {
+            Ok(_) => panic!("should fail without a registered resource"),
+            Err(err) => err,
+        };
+
+        match err {
+            TokenizerError::ModelNotFound(message) => {
+                assert!(message.contains("not registered"));
+            }
+            other => panic!("unexpected error type: {other}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "tiktoken-bpe")]
+    fn register_tiktoken_bpe_bytes_enables_kimi_counting() {
+        let registry = TokenizerRegistry::new();
+        registry
+            .register_model_bytes(
+                "moonshotai/kimi-k3",
+                crate::backend::tiktoken_bpe::tests::test_kimi_tiktoken_payload(),
+            )
+            .expect("kimi resource registration should succeed");
+
+        let count = registry
+            .count_tokens("kimi-k3", "你好ab")
+            .expect("kimi counting should succeed");
+        assert_eq!(count, 2);
+
+        // Kitoken-backed models count message content only; chat framing is
+        // owned by the caller (see KitokenBackend::count_messages).
+        let messages = [Message::new("user", "ab")];
+        let total = registry
+            .count_messages("kimi", &messages)
+            .expect("kimi message counting should succeed");
+        assert_eq!(total, 1);
     }
 
     #[test]

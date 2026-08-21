@@ -6,6 +6,7 @@ MikTik provides one interface for token counting across model families:
 - OpenAI models via `tiktoken-rs`
 - Hugging Face tokenizer JSON models via Kitoken
 - SentencePiece `.model` tokenizers via Kitoken
+- tiktoken BPE rank files (e.g. Moonshot Kimi's `tiktoken.model`) via Kitoken
 
 ## Design Goals
 - Unified API for `encode` / `decode` / token counting
@@ -109,7 +110,7 @@ assert!(TokenizerRegistry::is_huggingface_model("claude-3-5-sonnet"));
 
 ## Model Resource Registration
 
-For non-OpenAI families, register resources before counting:
+For file-backed families (Hugging Face, SentencePiece, tiktoken BPE), register resources before counting:
 - `register_model_file(model, path)`
 - `register_model_bytes(model, bytes)`
 - Compatibility aliases:
@@ -119,6 +120,7 @@ For non-OpenAI families, register resources before counting:
 Supported formats:
 - Web tokenizer: `tokenizer.json`
 - SentencePiece: `tokenizer.model`
+- tiktoken BPE ranks: `tiktoken.model` (requires the `tiktoken-bpe` feature)
 
 ## Thread Safety
 

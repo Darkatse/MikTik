@@ -337,6 +337,7 @@ dependencies = [
 name = "miktik"
 version = "0.4.1"
 dependencies = [
+ "base64",
  "kitoken",
  "thiserror 2.0.18",
  "tiktoken-rs",
