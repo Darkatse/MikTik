@@ -65,7 +65,7 @@ const WEB_TOKENIZER_MODELS: &[&str] = &[
     "nemo",
     "deepseek",
 ];
-const O_SERIES_PREFIXES: &[&str] = &["o1", "o3", "o4", "gpt-5"];
+const O_SERIES_PREFIXES: &[&str] = &["o1", "o3", "o4", "gpt-5", "gpt-6"];
 const GPT4_FAMILY_MATCHERS: &[&str] = &["gpt-4", "chatgpt-4o"];
 const GPT4O_MATCHERS: &[&str] = &["4o", "4.1", "4.5", "chatgpt-4o"];
 const CLAUDE_ALIASES: &[(&str, &str)] = &[("claude", "claude")];
@@ -724,6 +724,8 @@ mod tests {
         );
         assert_eq!(TokenizerRegistry::resolve_model("o3-mini"), "o1");
         assert_eq!(TokenizerRegistry::resolve_model("o4-mini"), "o1");
+        assert_eq!(TokenizerRegistry::resolve_model("gpt-6-astra"), "o1");
+        assert_eq!(TokenizerRegistry::resolve_model("gpt-6-variant"), "o1");
         assert_eq!(
             TokenizerRegistry::resolve_model("gpt-3.5-turbo-0301"),
             "gpt-3.5-turbo-0301"
