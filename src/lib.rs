@@ -38,6 +38,8 @@
 //! let count = registry.count_messages("claude", &messages).unwrap();
 //! ```
 
+#![forbid(unsafe_code)]
+
 pub mod backend;
 pub mod error;
 pub mod model;
