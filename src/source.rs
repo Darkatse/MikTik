@@ -100,10 +100,11 @@ pub(crate) fn definition(
     Ok(definition)
 }
 
-/// Recognizes a source format from its first bytes.
+/// Recognizes a source format from its first bytes. Each check accepts only a beginning that the
+/// format's converter accepts too, so a recognized source can fail only on its content.
 fn sniff(bytes: &[u8]) -> Option<Format> {
-    let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-    let first_non_space = text
+    // The whitespace JSON allows before a value.
+    let first_non_space = bytes
         .iter()
         .find(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'));
     if first_non_space == Some(&b'{') {
@@ -114,7 +115,7 @@ fn sniff(bytes: &[u8]) -> Option<Format> {
         return Some(Format::SentencePiece);
     }
     // A tiktoken rank file starts with a line `<base64 token> <decimal rank>`.
-    let line = text.split(|&byte| byte == b'\n').next()?;
+    let line = bytes.split(|&byte| byte == b'\n').next()?;
     let line = line.strip_suffix(b"\r").unwrap_or(line);
     let space = line.iter().position(|&byte| byte == b' ')?;
     let (token, rank) = (&line[..space], &line[space + 1..]);
@@ -280,7 +281,7 @@ mod tests {
     fn formats_are_recognized_from_their_first_bytes() {
         for (bytes, format) in [
             (&b"{\"model\": {}}"[..], Some(Format::TokenizerJson)),
-            (b"\xEF\xBB\xBF\r\n  {}", Some(Format::TokenizerJson)),
+            (b"\r\n  {}", Some(Format::TokenizerJson)),
             (b"\x0A\x09\x0A\x05<unk>", Some(Format::SentencePiece)),
             (b"IQ== 0\nIg== 1\n", Some(Format::TiktokenRanks)),
             (b"IQ== 0\r\n", Some(Format::TiktokenRanks)),
