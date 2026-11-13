@@ -144,12 +144,12 @@ const SENTENCEPIECE_OR_JSON: &[Format] = &[Format::SentencePiece, Format::Tokeni
 const TIKTOKEN_RANKS: &[Format] = &[Format::TiktokenRanks];
 
 /// A static, so every model has one address; the registry finds a model's slot by it.
+///
+/// Each row is a distinct tokenizer, so no two rows share both source and framing. A built-in row
+/// is named after one model that uses its encoding; the names of the others resolve to it.
 static MODELS: &[Model] = &[
-    Model::builtin("o1", Encoding::O200kBase, CHAT_ML),
     Model::builtin("gpt-4o", Encoding::O200kBase, CHAT_ML),
     Model::builtin("gpt-4", Encoding::Cl100kBase, CHAT_ML),
-    Model::builtin("gpt-4-32k", Encoding::Cl100kBase, CHAT_ML),
-    Model::builtin("gpt-3.5-turbo", Encoding::Cl100kBase, CHAT_ML),
     // This snapshot framed each message with one more token.
     Model::builtin(
         "gpt-3.5-turbo-0301",
@@ -187,20 +187,14 @@ type Rule = (&'static str, fn(&str) -> bool);
 /// that would wrongly match its names.
 const RULES: &[Rule] = &[
     ("gpt2", |name| name == "gpt-2"),
-    ("o1", |name| {
+    ("gpt-4o", |name| {
         ["o1", "o3", "o4", "gpt-5", "gpt-6"]
             .iter()
             .any(|prefix| name.starts_with(prefix))
+            || (name.contains("gpt-4") && contains_any(name, &["4o", "4.1", "4.5"]))
     }),
-    ("gpt-4-32k", |name| {
-        name.contains("gpt-4") && name.contains("32k")
-    }),
-    ("gpt-4o", |name| {
-        name.contains("gpt-4") && contains_any(name, &["4o", "4.1", "4.5"])
-    }),
-    ("gpt-4", |name| name.contains("gpt-4")),
-    ("gpt-3.5-turbo", |name| {
-        contains_any(name, &["gpt-3.5", "gpt-35"])
+    ("gpt-4", |name| {
+        contains_any(name, &["gpt-4", "gpt-3.5", "gpt-35"])
     }),
     ("claude", |name| name.contains("claude")),
     ("kimi", |name| {
@@ -255,16 +249,19 @@ mod tests {
     fn rules_map_names_to_models() {
         for (name, id) in [
             ("gpt-2", "gpt2"),
-            ("o3-mini", "o1"),
-            ("openai/gpt-5", "o1"),
-            ("gpt-5.2", "o1"),
-            ("gpt-6-astra", "o1"),
+            ("o1", "gpt-4o"),
+            ("o3-mini", "gpt-4o"),
+            ("openai/gpt-5", "gpt-4o"),
+            ("gpt-5.2", "gpt-4o"),
+            ("gpt-6-astra", "gpt-4o"),
             ("chatgpt-4o-latest", "gpt-4o"),
             ("gpt-4.1-mini", "gpt-4o"),
             ("gpt-4.5-preview", "gpt-4o"),
             ("gpt-4-turbo", "gpt-4"),
-            ("gpt-3.5-turbo-1106", "gpt-3.5-turbo"),
-            ("gpt-35-turbo", "gpt-3.5-turbo"),
+            ("gpt-4-32k", "gpt-4"),
+            ("gpt-3.5-turbo", "gpt-4"),
+            ("gpt-3.5-turbo-1106", "gpt-4"),
+            ("gpt-35-turbo", "gpt-4"),
             ("claude-3-5-sonnet", "claude"),
             ("moonshotai/kimi-k2.6", "kimi"),
             ("k3-256k", "kimi"),
@@ -291,7 +288,6 @@ mod tests {
     #[test]
     fn earlier_rules_win() {
         for (name, id) in [
-            ("gpt-4o-32k", "gpt-4-32k"),
             ("llama-3.3-70b", "llama3"),
             ("nerdstash-v2", "nerdstash_v2"),
             ("mistral-nemo", "mistral"),

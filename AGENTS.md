@@ -20,7 +20,7 @@ MikTik is a general-purpose tokenizer library for LLMs. TauriTavern is one of it
 
 ## Adding a model
 
-1. Add a row to `MODELS` in `src/model.rs`: id, source (built-in encoding or accepted formats) and framing.
+1. Add a row to `MODELS` in `src/model.rs`: id, source (built-in encoding or accepted formats) and framing. A row is a distinct tokenizer: if another row already has the same source and framing, add a resolution rule to that row instead, so the tokenizer loads once.
 2. If names other than the id should resolve to it, add a rule to `RULES`, before the first rule that would match those names wrongly.
 3. Add a representative name to the resolution tests.
 

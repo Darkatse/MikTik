@@ -125,9 +125,9 @@ fn registering_again_replaces_the_source() {
 
 #[cfg(feature = "openai")]
 #[test]
-fn concurrent_gets_share_one_tokenizer() {
+fn names_of_one_model_share_one_tokenizer() {
     let registry = TokenizerRegistry::new();
-    let names = ["gpt-4o", "chatgpt-4o-latest", "gpt-4.1-mini", "gpt-4o"];
+    let names = ["gpt-4o", "o3-mini", "openai/gpt-5", "chatgpt-4o-latest"];
     let start = std::sync::Barrier::new(names.len());
     let tokenizers = std::thread::scope(|scope| {
         let handles = names.map(|name| {
