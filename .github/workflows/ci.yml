@@ -42,6 +42,9 @@ jobs:
         features:
           - { name: no features, flags: --no-default-features }
           - { name: default, flags: "" }
+          - { name: huggingface, flags: --no-default-features --features huggingface }
+          - { name: sentencepiece, flags: --no-default-features --features sentencepiece }
+          - { name: tiktoken-bpe, flags: --no-default-features --features tiktoken-bpe }
           - { name: all features, flags: --all-features }
     steps:
       - uses: actions/checkout@v7

@@ -12,15 +12,25 @@ MikTik is a general-purpose tokenizer library for LLMs. TauriTavern is one of it
 
 ## Invariants
 
-1. **Model facts are written once.** A model's id, source and message framing live only in the model table (`src/model.rs`), and name resolution only produces rows of that table. Nothing else branches on a model id.
-2. **No `unsafe`.** The crate is `#![forbid(unsafe_code)]`. No input bytes can cause undefined behavior.
-3. **The only I/O is reading files the caller registers.** No network access, no writes.
+1. **Model facts are written once.** A model's id, source and message framing live only in the model table (`src/model.rs`), and name resolution only produces rows of that table. Nothing else branches on a model id. Which special tokens each operation recognizes follows from the source format (`SpecialTokens` in `src/source.rs`).
+2. **A source is checked when it loads.** `get` converts the source and builds the engine, so a source that cannot be used fails there, with an error naming the model and the source, and stays registered for the next try. A loaded `Tokenizer` never changes.
+3. **Exact results have a reference.** The built-in encodings match tiktoken-rs id for id (`tests/exact.rs`). Their rank files are OpenAI's (hashes in `assets/openai/README.md`); their split patterns and special tokens are tiktoken's, written in `src/source.rs`.
+4. **No `unsafe`.** The crate is `#![forbid(unsafe_code)]`. No input bytes can cause undefined behavior.
+5. **The only I/O is reading files the caller registers.** No network access, no writes.
 
 ## Adding a model
 
 1. Add a row to `MODELS` in `src/model.rs`: id, source (built-in encoding or accepted formats) and framing.
 2. If names other than the id should resolve to it, add a rule to `RULES`, before the first rule that would match those names wrongly.
 3. Add a representative name to the resolution tests.
+
+## Upgrading kitoken
+
+kitoken is the only engine, so an upgrade can change any exact result. Before taking one:
+
+- Run the full test matrix; `tests/exact.rs` compares the built-in encodings with tiktoken-rs and checks each format's special-token rule.
+- Read the changes to the converters and to how `encode` splits around special tokens. MikTik's built-in definitions depend on special tokens with `extract: false` being split only where they are recognized.
+- Raise `rust-version` if kitoken's rises.
 
 ## Commands
 

@@ -3,7 +3,7 @@ name = "miktik"
 version = "0.4.3"
 edition = "2024"
 rust-version = "1.92"
-description = "A unified, multi-backend tokenizer library for LLMs"
+description = "Tokenizers for LLMs: OpenAI encodings, Hugging Face tokenizer.json, SentencePiece and tiktoken rank files through one engine"
 license = "MIT"
 repository = "https://github.com/Darkatse/MikTik"
 homepage = "https://github.com/Darkatse/MikTik"
@@ -11,25 +11,24 @@ documentation = "https://docs.rs/miktik"
 readme = "README.md"
 keywords = ["llm", "tokenizer", "tiktoken", "huggingface", "rust"]
 categories = ["text-processing"]
-include = ["/src", "/tests", "/Cargo.toml", "/README.md", "/LICENSE"]
+include = ["/src", "/assets", "/tests", "/Cargo.toml", "/README.md", "/LICENSE"]
 
 [features]
 default = ["openai"]
-openai = ["dep:tiktoken-rs"]
-huggingface = ["dep:kitoken", "kitoken/convert-tokenizers"]
-sentencepiece = ["dep:kitoken", "kitoken/convert-sentencepiece"]
-tiktoken-bpe = ["dep:kitoken", "kitoken/convert-tiktoken", "kitoken/regex-unicode"]
+openai = ["kitoken/convert-tiktoken"]
+huggingface = ["kitoken/convert-tokenizers"]
+sentencepiece = ["kitoken/convert-sentencepiece"]
+tiktoken-bpe = ["kitoken/convert-tiktoken"]
 full = ["openai", "huggingface", "sentencepiece", "tiktoken-bpe"]
 
 [dependencies]
-tiktoken-rs = { version = "0.12.0", optional = true }
 thiserror = "2"
-
-[dev-dependencies]
-base64 = "0.22"
 
 [dependencies.kitoken]
 version = "0.11.1"
 default-features = false
-features = ["std", "normalization", "regex-perf", "multiversion"]
-optional = true
+features = ["std", "serialization", "normalization", "regex-perf", "regex-unicode", "multiversion"]
+
+[dev-dependencies]
+base64 = "0.22"
+tiktoken-rs = "0.12"

@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt;
 
 /// A tokenizer identity, such as `gpt-4o`, `claude` or `gemma`: one row of MikTik's model table.
 ///
@@ -51,6 +52,16 @@ pub enum Format {
     TiktokenRanks,
 }
 
+impl fmt::Display for Format {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::TokenizerJson => "tokenizer.json",
+            Self::SentencePiece => "SentencePiece model",
+            Self::TiktokenRanks => "tiktoken rank file",
+        })
+    }
+}
+
 /// How chat messages are counted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Framing {
@@ -72,11 +83,13 @@ impl Model {
 
     /// Resolves a model name such as `chatgpt-4o-latest` or `qwen3-max` to a model.
     ///
-    /// The name is trimmed and compared case-insensitively. A model id resolves to itself; any other
-    /// name goes through the resolution rules, and the first rule that matches decides. Returns
-    /// `None` when no rule matches; the caller chooses what to fall back to.
+    /// The name is trimmed and compared case-insensitively, and a provider prefix such as `openai/`
+    /// is dropped. A model id resolves to itself; any other name goes through the resolution rules,
+    /// and the first rule that matches decides. Returns `None` when no rule matches; the caller
+    /// chooses what to fall back to.
     pub fn resolve(name: &str) -> Option<&'static Model> {
         let name = name.trim();
+        let name = name.rsplit_once('/').map_or(name, |(_, model)| model);
         let name = if name.bytes().any(|byte| byte.is_ascii_uppercase()) {
             Cow::Owned(name.to_ascii_lowercase())
         } else {
@@ -94,10 +107,12 @@ impl Model {
         self.id
     }
 
+    /// Where the model's tokenizer comes from.
     pub fn source(&self) -> Source {
         self.source
     }
 
+    /// How the model counts chat messages.
     pub fn framing(&self) -> Framing {
         self.framing
     }
@@ -110,11 +125,11 @@ impl Model {
         }
     }
 
-    const fn registered(id: &'static str, formats: &'static [Format]) -> Self {
+    const fn registered(id: &'static str, formats: &'static [Format], framing: Framing) -> Self {
         Self {
             id,
             source: Source::Registered(formats),
-            framing: Framing::ContentOnly,
+            framing,
         }
     }
 }
@@ -123,11 +138,13 @@ const CHAT_ML: Framing = Framing::ChatMl {
     per_message: 3,
     per_reply: 3,
 };
+const CONTENT_ONLY: Framing = Framing::ContentOnly;
 const JSON: &[Format] = &[Format::TokenizerJson];
 const SENTENCEPIECE_OR_JSON: &[Format] = &[Format::SentencePiece, Format::TokenizerJson];
 const TIKTOKEN_RANKS: &[Format] = &[Format::TiktokenRanks];
 
-const MODELS: &[Model] = &[
+/// A static, so every model has one address; the registry finds a model's slot by it.
+static MODELS: &[Model] = &[
     Model::builtin("o1", Encoding::O200kBase, CHAT_ML),
     Model::builtin("gpt-4o", Encoding::O200kBase, CHAT_ML),
     Model::builtin("gpt-4", Encoding::Cl100kBase, CHAT_ML),
@@ -143,21 +160,23 @@ const MODELS: &[Model] = &[
         },
     ),
     Model::builtin("gpt2", Encoding::R50kBase, CHAT_ML),
-    Model::registered("claude", JSON),
-    Model::registered("llama3", JSON),
-    Model::registered("command-r", JSON),
-    Model::registered("command-a", JSON),
-    Model::registered("qwen2", JSON),
-    Model::registered("nemo", JSON),
-    Model::registered("deepseek", JSON),
-    Model::registered("kimi", TIKTOKEN_RANKS),
-    Model::registered("llama", SENTENCEPIECE_OR_JSON),
-    Model::registered("mistral", SENTENCEPIECE_OR_JSON),
-    Model::registered("yi", SENTENCEPIECE_OR_JSON),
-    Model::registered("gemma", SENTENCEPIECE_OR_JSON),
-    Model::registered("jamba", SENTENCEPIECE_OR_JSON),
-    Model::registered("nerdstash", SENTENCEPIECE_OR_JSON),
-    Model::registered("nerdstash_v2", SENTENCEPIECE_OR_JSON),
+    Model::registered("claude", JSON, CONTENT_ONLY),
+    Model::registered("llama3", JSON, CONTENT_ONLY),
+    Model::registered("command-r", JSON, CONTENT_ONLY),
+    Model::registered("command-a", JSON, CONTENT_ONLY),
+    Model::registered("qwen2", JSON, CONTENT_ONLY),
+    Model::registered("nemo", JSON, CONTENT_ONLY),
+    Model::registered("deepseek", JSON, CONTENT_ONLY),
+    // Kimi's chat template frames each message with three special tokens and primes the reply with
+    // three tokens, as ChatML does.
+    Model::registered("kimi", TIKTOKEN_RANKS, CHAT_ML),
+    Model::registered("llama", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
+    Model::registered("mistral", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
+    Model::registered("yi", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
+    Model::registered("gemma", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
+    Model::registered("jamba", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
+    Model::registered("nerdstash", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
+    Model::registered("nerdstash_v2", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
 ];
 
 /// A model id and a test of normalized names.
@@ -173,11 +192,13 @@ const RULES: &[Rule] = &[
             .iter()
             .any(|prefix| name.starts_with(prefix))
     }),
-    ("gpt-4-32k", |name| is_gpt_4(name) && name.contains("32k")),
-    ("gpt-4o", |name| {
-        is_gpt_4(name) && contains_any(name, &["4o", "4.1", "4.5"])
+    ("gpt-4-32k", |name| {
+        name.contains("gpt-4") && name.contains("32k")
     }),
-    ("gpt-4", is_gpt_4),
+    ("gpt-4o", |name| {
+        name.contains("gpt-4") && contains_any(name, &["4o", "4.1", "4.5"])
+    }),
+    ("gpt-4", |name| name.contains("gpt-4")),
     ("gpt-3.5-turbo", |name| {
         contains_any(name, &["gpt-3.5", "gpt-35"])
     }),
@@ -204,10 +225,6 @@ const RULES: &[Rule] = &[
     ("deepseek", |name| name.contains("deepseek")),
 ];
 
-fn is_gpt_4(name: &str) -> bool {
-    contains_any(name, &["gpt-4", "chatgpt-4o"])
-}
-
 fn contains_any(name: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| name.contains(needle))
 }
@@ -228,10 +245,18 @@ mod tests {
     }
 
     #[test]
+    fn every_rule_names_a_model() {
+        for (id, _) in RULES {
+            assert!(Model::all().iter().any(|model| model.id() == *id), "{id}");
+        }
+    }
+
+    #[test]
     fn rules_map_names_to_models() {
         for (name, id) in [
             ("gpt-2", "gpt2"),
             ("o3-mini", "o1"),
+            ("openai/gpt-5", "o1"),
             ("gpt-5.2", "o1"),
             ("gpt-6-astra", "o1"),
             ("chatgpt-4o-latest", "gpt-4o"),
@@ -247,6 +272,7 @@ mod tests {
             ("mistral-large", "mistral"),
             ("yi-large", "yi"),
             ("gemini-3.8-flash", "gemma"),
+            ("models/gemini-3.1-pro-preview", "gemma"),
             ("learnlm-pro", "gemma"),
             ("jamba-1.5-large", "jamba"),
             ("nerdstash-v1", "nerdstash"),
