@@ -21,7 +21,7 @@ impl KitokenBackend<true> {
     /// Load a tiktoken BPE rank file from disk.
     pub fn from_bpe_file(path: &Path) -> Result<Self, TokenizerError> {
         let tokenizer = Kitoken::from_tiktoken_file(path).map_err(|err| {
-            TokenizerError::LoadError(format!(
+            TokenizerError::Load(format!(
                 "failed to load tiktoken model from '{}': {err}",
                 path.display()
             ))
@@ -32,7 +32,7 @@ impl KitokenBackend<true> {
     /// Load a tiktoken BPE rank file from memory.
     pub fn from_bpe_bytes(data: &[u8]) -> Result<Self, TokenizerError> {
         let tokenizer = Kitoken::from_tiktoken_slice(data).map_err(|err| {
-            TokenizerError::LoadError(format!("failed to load tiktoken model bytes: {err}"))
+            TokenizerError::Load(format!("failed to load tiktoken model bytes: {err}"))
         })?;
         Ok(Self::new(tokenizer))
     }

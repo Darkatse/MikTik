@@ -1,7 +1,8 @@
-use tiktoken_rs::{CoreBPE, bpe_for_model};
+use tiktoken_rs::{CoreBPE, cl100k_base_singleton, o200k_base_singleton, r50k_base_singleton};
 
 use crate::error::TokenizerError;
-use crate::model::Message;
+use crate::message::Message;
+use crate::model::{Encoding, Framing};
 use crate::tokenizer::AutoTokenizer;
 
 /// Backend for OpenAI models using the tiktoken BPE tokenizer.
@@ -9,31 +10,17 @@ pub struct TiktokenBackend {
     // tiktoken-rs 0.12 owns each parsed encoding in a process-wide singleton.
     // Holding its static reference avoids rebuilding large rank tables per registry.
     bpe: &'static CoreBPE,
-    /// Per-message token overhead (e.g., 3 for most GPT models, 4 for gpt-3.5-turbo-0301).
-    tokens_per_message: usize,
-    /// Extra tokens added at the end of the full prompt (typically 3 for "assistant" priming).
-    tokens_per_reply: usize,
+    framing: Framing,
 }
 
 impl TiktokenBackend {
-    /// Create a backend from a tiktoken model name (e.g., `"gpt-4o"`, `"gpt-3.5-turbo"`).
-    pub fn from_model(model: &str) -> Result<Self, TokenizerError> {
-        let bpe = bpe_for_model(model).map_err(|err| {
-            TokenizerError::LoadError(format!("failed to load tiktoken model '{model}': {err}"))
-        })?;
-
-        // The 0301 snapshot used one extra ChatML framing token per message.
-        let tokens_per_message = if model.starts_with("gpt-3.5-turbo-0301") {
-            4
-        } else {
-            3
+    pub fn new(encoding: Encoding, framing: Framing) -> Self {
+        let bpe = match encoding {
+            Encoding::O200kBase => o200k_base_singleton(),
+            Encoding::Cl100kBase => cl100k_base_singleton(),
+            Encoding::R50kBase => r50k_base_singleton(),
         };
-
-        Ok(Self {
-            bpe,
-            tokens_per_message,
-            tokens_per_reply: 3,
-        })
+        Self { bpe, framing }
     }
 }
 
@@ -43,36 +30,49 @@ impl AutoTokenizer for TiktokenBackend {
     }
 
     fn count_tokens(&self, text: &str) -> Result<usize, TokenizerError> {
-        // Use the counting API so future tiktoken-rs releases can optimize it
-        // independently without changing MikTik's backend contract.
         Ok(self.bpe.count_ordinary(text))
     }
 
     fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
         self.bpe
             .decode(token_ids)
-            .map_err(|err| TokenizerError::DecodeError(err.to_string()))
+            .map_err(|err| TokenizerError::Decode(err.to_string()))
     }
 
     fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {
-        // ChatML accounting is reply priming plus framing and encoded fields per message.
-        let mut total = self.tokens_per_reply;
-        for message in messages {
-            total += self.tokens_per_message;
-            total += self.bpe.count_with_special_tokens(&message.role);
-            total += self.bpe.count_with_special_tokens(&message.content);
-        }
-        Ok(total)
+        let count = |text: &str| self.bpe.count_with_special_tokens(text);
+        Ok(match self.framing {
+            Framing::ChatMl {
+                per_message,
+                per_reply,
+            } => {
+                per_reply
+                    + messages
+                        .iter()
+                        .map(|message| per_message + count(&message.role) + count(&message.content))
+                        .sum::<usize>()
+            }
+            Framing::ContentOnly => messages.iter().map(|message| count(&message.content)).sum(),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Model;
+
+    fn backend(model: &str) -> TiktokenBackend {
+        let model = Model::resolve(model).unwrap();
+        let crate::model::Source::Builtin(encoding) = model.source() else {
+            panic!("{} is not built in", model.id());
+        };
+        TiktokenBackend::new(encoding, model.framing())
+    }
 
     #[test]
     fn tiktoken_encode_decode_roundtrip() {
-        let backend = TiktokenBackend::from_model("gpt-4o").expect("backend should load");
+        let backend = backend("gpt-4o");
         let input = "hello token world";
 
         let encoded = backend.encode(input).expect("encode should succeed");
@@ -83,8 +83,8 @@ mod tests {
 
     #[test]
     fn legacy_gpt35_counts_more_message_overhead() {
-        let legacy = TiktokenBackend::from_model("gpt-3.5-turbo-0301").expect("legacy loads");
-        let modern = TiktokenBackend::from_model("gpt-4").expect("modern loads");
+        let legacy = backend("gpt-3.5-turbo-0301");
+        let modern = backend("gpt-4");
         let messages = vec![
             Message::new("system", "You are a helpful assistant."),
             Message::new("user", "Explain ownership in Rust."),
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn o1_alias_uses_o200k_compatible_model() {
-        let backend = TiktokenBackend::from_model("o1").expect("o1 alias should load");
+        let backend = backend("o1");
         let count = backend
             .count_tokens("count me")
             .expect("count should succeed");
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn gpt2_uses_r50k_tokenizer() {
-        let backend = TiktokenBackend::from_model("gpt2").expect("gpt2 should load");
+        let backend = backend("gpt2");
         let count = backend
             .count_tokens("count me")
             .expect("count should succeed");
@@ -116,13 +116,13 @@ mod tests {
 
     #[test]
     fn decode_invalid_token_id_returns_decode_error() {
-        let backend = TiktokenBackend::from_model("gpt-4o").expect("backend should load");
+        let backend = backend("gpt-4o");
         let err = backend
             .decode(&[u32::MAX])
             .expect_err("invalid token id should fail");
 
         match err {
-            TokenizerError::DecodeError(_) => {}
+            TokenizerError::Decode(_) => {}
             other => panic!("unexpected error type: {other}"),
         }
     }

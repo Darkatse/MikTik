@@ -1,5 +1,5 @@
 use crate::error::TokenizerError;
-use crate::model::Message;
+use crate::message::Message;
 
 const DEFAULT_CUMULATIVE_ESTIMATE_CONTEXT_BYTES: usize = 256;
 
@@ -42,7 +42,7 @@ fn apply_count_delta(
     };
 
     updated.ok_or_else(|| {
-        TokenizerError::EncodeError(
+        TokenizerError::Encode(
             "cumulative token estimate exceeded the supported count range".to_string(),
         )
     })
@@ -146,7 +146,7 @@ mod tests {
                 .iter()
                 .map(|id| {
                     char::from_u32(*id).ok_or_else(|| {
-                        TokenizerError::DecodeError(format!("invalid character token: {id}"))
+                        TokenizerError::Decode(format!("invalid character token: {id}"))
                     })
                 })
                 .collect()
@@ -187,7 +187,7 @@ mod tests {
 
         impl AutoTokenizer for FailingTokenizer {
             fn encode(&self, _: &str) -> Result<Vec<u32>, TokenizerError> {
-                Err(TokenizerError::EncodeError("unexpected call".to_string()))
+                Err(TokenizerError::Encode("unexpected call".to_string()))
             }
 
             fn decode(&self, _: &[u32]) -> Result<String, TokenizerError> {

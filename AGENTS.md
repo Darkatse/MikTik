@@ -12,8 +12,15 @@ MikTik is a general-purpose tokenizer library for LLMs. TauriTavern is one of it
 
 ## Invariants
 
-1. **No `unsafe`.** The crate is `#![forbid(unsafe_code)]`. No input bytes can cause undefined behavior.
-2. **The only I/O is reading files the caller registers.** No network access, no writes.
+1. **Model facts are written once.** A model's id, source and message framing live only in the model table (`src/model.rs`), and name resolution only produces rows of that table. Nothing else branches on a model id.
+2. **No `unsafe`.** The crate is `#![forbid(unsafe_code)]`. No input bytes can cause undefined behavior.
+3. **The only I/O is reading files the caller registers.** No network access, no writes.
+
+## Adding a model
+
+1. Add a row to `MODELS` in `src/model.rs`: id, source (built-in encoding or accepted formats) and framing.
+2. If names other than the id should resolve to it, add a rule to `RULES`, before the first rule that would match those names wrongly.
+3. Add a representative name to the resolution tests.
 
 ## Commands
 

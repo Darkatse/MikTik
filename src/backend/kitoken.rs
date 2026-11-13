@@ -1,7 +1,7 @@
 use ::kitoken::Kitoken;
 
 use crate::error::TokenizerError;
-use crate::model::Message;
+use crate::message::Message;
 use crate::tokenizer::AutoTokenizer;
 
 /// Shared runtime adapter for tokenizer definitions converted into Kitoken.
@@ -24,18 +24,18 @@ impl<const SPECIAL_TOKENS: bool> AutoTokenizer for KitokenBackend<SPECIAL_TOKENS
     fn encode(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
         self.tokenizer
             .encode(text, SPECIAL_TOKENS)
-            .map_err(|err| TokenizerError::EncodeError(err.to_string()))
+            .map_err(|err| TokenizerError::Encode(err.to_string()))
     }
 
     fn decode(&self, token_ids: &[u32]) -> Result<String, TokenizerError> {
         let bytes = self
             .tokenizer
             .decode(token_ids, SPECIAL_TOKENS)
-            .map_err(|err| TokenizerError::DecodeError(err.to_string()))?;
+            .map_err(|err| TokenizerError::Decode(err.to_string()))?;
 
         // Kitoken preserves arbitrary token bytes; MikTik deliberately exposes UTF-8 text.
         // A partial byte token therefore remains an explicit decode error for the caller.
-        String::from_utf8(bytes).map_err(|err| TokenizerError::DecodeError(err.to_string()))
+        String::from_utf8(bytes).map_err(|err| TokenizerError::Decode(err.to_string()))
     }
 
     fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {

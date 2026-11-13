@@ -15,7 +15,7 @@ impl KitokenBackend<false> {
     /// Load and convert a serialized SentencePiece model from a file.
     pub fn from_file(path: &Path) -> Result<Self, TokenizerError> {
         let tokenizer = Kitoken::from_sentencepiece_file(path).map_err(|err| {
-            TokenizerError::LoadError(format!(
+            TokenizerError::Load(format!(
                 "failed to load SentencePiece tokenizer from '{}': {err}",
                 path.display()
             ))
@@ -26,7 +26,7 @@ impl KitokenBackend<false> {
     /// Load and convert a serialized SentencePiece model from memory.
     pub fn from_bytes(data: &[u8]) -> Result<Self, TokenizerError> {
         let tokenizer = Kitoken::from_sentencepiece_slice(data).map_err(|err| {
-            TokenizerError::LoadError(format!("failed to parse SentencePiece model bytes: {err}"))
+            TokenizerError::Load(format!("failed to parse SentencePiece model bytes: {err}"))
         })?;
         Ok(Self::new(tokenizer))
     }
@@ -112,7 +112,7 @@ mod tests {
             Ok(_) => panic!("invalid bytes should fail"),
             Err(err) => err,
         };
-        assert!(matches!(err, TokenizerError::LoadError(_)));
+        assert!(matches!(err, TokenizerError::Load(_)));
 
         let missing = std::env::temp_dir().join("miktik-missing-sentencepiece.model");
         let _ = std::fs::remove_file(&missing);
@@ -121,7 +121,7 @@ mod tests {
             Err(err) => err,
         };
         assert!(
-            matches!(err, TokenizerError::LoadError(message) if message.contains(&missing.display().to_string()))
+            matches!(err, TokenizerError::Load(message) if message.contains(&missing.display().to_string()))
         );
     }
 }

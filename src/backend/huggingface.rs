@@ -15,7 +15,7 @@ impl KitokenBackend<true> {
     /// Load and convert a Hugging Face tokenizer definition from a file.
     pub fn from_file(path: &Path) -> Result<Self, TokenizerError> {
         let tokenizer = Kitoken::from_tokenizers_file(path).map_err(|err| {
-            TokenizerError::LoadError(format!(
+            TokenizerError::Load(format!(
                 "failed to load Hugging Face tokenizer from '{}': {err}",
                 path.display()
             ))
@@ -26,7 +26,7 @@ impl KitokenBackend<true> {
     /// Load and convert a Hugging Face tokenizer definition from memory.
     pub fn from_bytes(data: &[u8]) -> Result<Self, TokenizerError> {
         let tokenizer = Kitoken::from_tokenizers_slice(data).map_err(|err| {
-            TokenizerError::LoadError(format!(
+            TokenizerError::Load(format!(
                 "failed to deserialize Hugging Face tokenizer bytes: {err}"
             ))
         })?;
@@ -39,7 +39,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::model::Message;
+    use crate::message::Message;
     use crate::tokenizer::AutoTokenizer;
 
     use super::*;
@@ -89,6 +89,6 @@ mod tests {
             Ok(_) => panic!("invalid bytes should fail"),
             Err(err) => err,
         };
-        assert!(matches!(err, TokenizerError::LoadError(_)));
+        assert!(matches!(err, TokenizerError::Load(_)));
     }
 }

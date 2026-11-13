@@ -41,12 +41,14 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
-pub mod error;
-pub mod model;
-pub mod registry;
+mod error;
+mod message;
+mod model;
+mod registry;
 pub mod tokenizer;
 
 pub use error::TokenizerError;
-pub use model::Message;
+pub use message::Message;
+pub use model::{Encoding, Format, Framing, Model, Source};
 pub use registry::TokenizerRegistry;
 pub use tokenizer::{AutoTokenizer, CumulativeEstimateOptions};
