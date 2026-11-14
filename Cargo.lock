@@ -376,6 +376,8 @@ name = "miktik"
 version = "0.4.3"
 dependencies = [
  "base64 0.22.1",
+ "foldhash",
+ "hashbrown",
  "kitoken",
  "thiserror 2.0.18",
  "tiktoken-rs",

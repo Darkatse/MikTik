@@ -20,14 +20,19 @@ pub struct Tokenizer {
 }
 
 impl Tokenizer {
+    /// Loads the model's tokenizer from `source`, keeping estimates of up to `segment_cache` bytes
+    /// of recent segments.
     pub(crate) fn load(
         model: &'static Model,
         source: Option<&SourceData>,
+        segment_cache: usize,
     ) -> Result<Self, TokenizerError> {
         let error = |detail: String| source::load_error(model, source, detail);
         let definition = source::definition(model, source)?;
         let specials = SpecialTokens::of(model, &definition);
-        let estimator = Estimator::from_definition(&definition, specials.in_text).map_err(error)?;
+        let estimator = Estimator::from_definition(&definition, specials.in_text)
+            .map_err(error)?
+            .with_segment_cache(segment_cache);
         let kitoken = Kitoken::from_definition(definition).map_err(|err| error(err.to_string()))?;
         Ok(Self {
             model,

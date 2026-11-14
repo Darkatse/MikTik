@@ -44,6 +44,10 @@
 //! its segments. On the texts MikTik is tested with, every model's estimate of a whole book is
 //! within 2% of the exact count, and 95% of 1 KiB pieces are within 5%.
 //!
+//! Because segments add up, a registry made with [`TokenizerRegistry::with_segment_cache`] keeps
+//! the estimates of recent segments, and text estimated again, such as a chat that grows at its
+//! end, costs only its new segments. The cache changes no result.
+//!
 //! ## Features
 //!
 //! - `openai` (default): the built-in OpenAI encodings.

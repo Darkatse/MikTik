@@ -6,7 +6,8 @@
 //!
 //! The directories are laid out as `tests/corpus.rs` describes; `scripts/fetch-test-assets.sh`
 //! fills them. Each figure is the best of several runs on one thread. Pin the process to one kind of
-//! core (`taskset` on Android) to measure that core.
+//! core (`taskset` on Android) to measure that core. `cached` is how much faster the estimate of the
+//! first 100 KiB of the text is when the segment cache holds all its segments.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -22,10 +23,11 @@ fn main() {
     let texts = texts(Path::new(corpora));
 
     println!(
-        "{:<18} {:>8}  {:<6} {:>12} {:>14} {:>8}",
-        "model", "load ms", "text", "exact MB/s", "estimate MB/s", "speedup"
+        "{:<18} {:>8}  {:<6} {:>12} {:>14} {:>8} {:>8}",
+        "model", "load ms", "text", "exact MB/s", "estimate MB/s", "speedup", "cached"
     );
     let registry = TokenizerRegistry::new();
+    let cached_registry = TokenizerRegistry::with_segment_cache(1 << 30);
     for model in Model::all() {
         if !only.is_empty() && !only.iter().any(|id| id == model.id()) {
             continue;
@@ -35,19 +37,28 @@ fn main() {
                 println!("{:<18} no source", model.id());
                 continue;
             };
-            registry.register_model_file(model.id(), source).unwrap();
+            registry.register_model_file(model.id(), &source).unwrap();
+            cached_registry
+                .register_model_file(model.id(), source)
+                .unwrap();
         }
         let (tokenizer, load) = timed(|| registry.get(model.id()).unwrap());
+        let cached = cached_registry.get(model.id()).unwrap();
         for (name, text) in &texts {
             let exact = best(3, || tokenizer.count_tokens(text).unwrap());
             let estimate = best(5, || tokenizer.estimate_tokens(text));
+            let head = head(text, 100 * 1024);
+            let miss = best(5, || tokenizer.estimate_tokens(head));
+            cached.estimate_tokens(head);
+            let hit = best(5, || cached.estimate_tokens(head));
             println!(
-                "{:<18} {:>8.1}  {name:<6} {:>12.1} {:>14.1} {:>7.1}x",
+                "{:<18} {:>8.1}  {name:<6} {:>12.1} {:>14.1} {:>7.1}x {:>7.1}x",
                 model.id(),
                 millis(load),
                 megabytes_per_second(text, exact),
                 megabytes_per_second(text, estimate),
                 exact.as_secs_f64() / estimate.as_secs_f64(),
+                miss.as_secs_f64() / hit.as_secs_f64(),
             );
         }
     }
@@ -66,6 +77,11 @@ fn texts(directory: &Path) -> Vec<(String, String)> {
         .collect();
     texts.sort();
     texts
+}
+
+/// The longest prefix of `text` of at most `len` bytes.
+fn head(text: &str, len: usize) -> &str {
+    &text[..text.floor_char_boundary(len.min(text.len()))]
 }
 
 fn source_file(directory: &Path, id: &str) -> Option<std::path::PathBuf> {

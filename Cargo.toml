@@ -22,6 +22,8 @@ tiktoken-bpe = ["kitoken/convert-tiktoken"]
 full = ["openai", "huggingface", "sentencepiece", "tiktoken-bpe"]
 
 [dependencies]
+foldhash = { version = "0.2", default-features = false }
+hashbrown = { version = "0.17", default-features = false }
 thiserror = "2"
 
 [dependencies.kitoken]

@@ -97,6 +97,25 @@ fn estimates_add_up() {
 
 #[cfg(feature = "openai")]
 #[test]
+fn the_segment_cache_changes_no_estimate() {
+    let plain = TokenizerRegistry::new().get("gpt-4o").unwrap();
+    // Small enough to change generations often.
+    let cached = TokenizerRegistry::with_segment_cache(4 * 1024)
+        .get("gpt-4o")
+        .unwrap();
+    let texts = support::random_texts(FRAGMENTS, 400, 20);
+    for text in texts.iter().chain(&texts) {
+        assert_eq!(
+            cached.estimate_tokens(text),
+            plain.estimate_tokens(text),
+            "{text:?}"
+        );
+    }
+    assert_estimates_add_up(&cached);
+}
+
+#[cfg(feature = "openai")]
+#[test]
 fn special_tokens_that_text_does_not_produce_are_not_pieces() {
     let gpt = TokenizerRegistry::new().get("gpt-4o").unwrap();
     assert!(gpt.estimate_tokens("<|endoftext|>") > 1);

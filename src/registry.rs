@@ -17,6 +17,8 @@ use crate::tokenizer::Tokenizer;
 pub struct TokenizerRegistry {
     /// One slot per row of [`Model::all`], in the same order.
     slots: Box<[Mutex<Slot>]>,
+    /// The bytes of segment text each tokenizer's estimate cache holds.
+    segment_cache: usize,
 }
 
 enum Slot {
@@ -26,12 +28,21 @@ enum Slot {
 }
 
 impl TokenizerRegistry {
+    /// A registry whose tokenizers keep no estimates.
     pub fn new() -> Self {
+        Self::with_segment_cache(0)
+    }
+
+    /// A registry whose tokenizers each keep the estimates of recent segments, up to
+    /// `capacity_bytes` of segment text. Estimates are the same with and without the cache; text
+    /// that is estimated again, such as a long chat that grows at its end, is estimated faster.
+    pub fn with_segment_cache(capacity_bytes: usize) -> Self {
         Self {
             slots: Model::all()
                 .iter()
                 .map(|_| Mutex::new(Slot::Empty))
                 .collect(),
+            segment_cache: capacity_bytes,
         }
     }
 
@@ -61,8 +72,8 @@ impl TokenizerRegistry {
         let mut slot = self.slot(model);
         let tokenizer = match &*slot {
             Slot::Loaded(tokenizer) => return Ok(Arc::clone(tokenizer)),
-            Slot::Empty => Tokenizer::load(model, None)?,
-            Slot::Registered(source) => Tokenizer::load(model, Some(source))?,
+            Slot::Empty => Tokenizer::load(model, None, self.segment_cache)?,
+            Slot::Registered(source) => Tokenizer::load(model, Some(source), self.segment_cache)?,
         };
         let tokenizer = Arc::new(tokenizer);
         *slot = Slot::Loaded(Arc::clone(&tokenizer));

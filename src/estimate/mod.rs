@@ -1,15 +1,17 @@
-//! Estimates. A text is folded as the tokenizer normalizes it, then cut into segments after each
-//! newline that is followed by something other than whitespace. A segment is estimated by covering
-//! it from its start: each step takes the longest piece the rest of the segment starts with, or one
-//! byte where no piece does, and counts one token. A text's estimate is the sum of its segments'
-//! estimates, so it depends only on the text and adds up across cuts.
+//! Estimates. A text is cut into segments after each newline that is followed by something other
+//! than whitespace. A segment is folded as the tokenizer normalizes it, then covered from its start:
+//! each step takes the longest piece the rest of the segment starts with, or one byte where no piece
+//! does, and counts one token. A text's estimate is the sum of its segments' estimates, so it
+//! depends only on the text and adds up across cuts.
 
+mod cache;
 mod trie;
 
 use std::borrow::Cow;
 
 use kitoken::{Definition, Normalization, SpecialTokenKinds, UnicodeNormalization};
 
+use cache::SegmentCache;
 use trie::Trie;
 
 /// The estimate side of a tokenizer, derived from its definition.
@@ -20,6 +22,8 @@ pub(crate) struct Estimator {
     fold: bool,
     /// The split starts a part at the last newline of a whitespace run that other text follows.
     split_before_last_newline: bool,
+    /// Estimates of recent segments, when the registry keeps them.
+    cache: Option<SegmentCache>,
 }
 
 /// The character SentencePiece writes for a space.
@@ -89,14 +93,21 @@ impl Estimator {
             trie: Trie::build(&pieces)?,
             fold,
             split_before_last_newline,
+            cache: None,
         })
+    }
+
+    /// Keeps estimates of up to `capacity` bytes of recent segments; 0 keeps none.
+    pub(crate) fn with_segment_cache(self, capacity: usize) -> Self {
+        Self {
+            cache: (capacity > 0).then(|| SegmentCache::new(capacity)),
+            ..self
+        }
     }
 
     /// The estimate of `text`.
     pub(crate) fn estimate(&self, text: &str) -> usize {
-        segments(&self.fold(text))
-            .map(|segment| self.segment(segment))
-            .sum()
+        segments(text).map(|segment| self.segment(segment)).sum()
     }
 
     /// The estimates of `base + additions[..=i]` for each `i`, each equal to [`estimate`] of that
@@ -113,9 +124,8 @@ impl Estimator {
             .iter()
             .map(|addition| addition.as_ref().len())
             .sum();
-        // Folding maps each character on its own, so the folded text grows by folded additions.
         let mut text = String::with_capacity(base.len() + added);
-        text.push_str(&self.fold(base));
+        text.push_str(base);
         // The estimate of the segments before `open`, where the last segment starts.
         let mut closed = 0;
         let mut open = 0;
@@ -123,7 +133,7 @@ impl Estimator {
         let mut from = 0;
         let mut estimates = Vec::with_capacity(additions.len());
         for addition in additions {
-            text.push_str(&self.fold(addition.as_ref()));
+            text.push_str(addition.as_ref());
             while let Some(cut) = next_cut(&text, from) {
                 closed += self.segment(&text[open..cut]);
                 (open, from) = (cut, cut);
@@ -146,16 +156,19 @@ impl Estimator {
         estimates
     }
 
-    fn fold<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        if self.fold {
-            fold_full_width(text)
-        } else {
-            Cow::Borrowed(text)
+    fn segment(&self, segment: &str) -> usize {
+        match &self.cache {
+            Some(cache) => cache.get_or(segment, || self.cover_segment(segment)),
+            None => self.cover_segment(segment),
         }
     }
 
-    /// The estimate of a folded segment.
-    fn segment(&self, segment: &str) -> usize {
+    fn cover_segment(&self, segment: &str) -> usize {
+        let segment = if self.fold {
+            fold_full_width(segment)
+        } else {
+            Cow::Borrowed(segment)
+        };
         let bytes = segment.as_bytes();
         match bytes {
             // Other text follows the segment, unless it ends the text, so the newline is a token of
@@ -191,16 +204,19 @@ fn segments(text: &str) -> impl Iterator<Item = &str> {
     })
 }
 
-/// The first cut after `from`: a position after a newline and before a byte other than ASCII
+/// The first cut after `from`: a position after a newline and before a character other than
 /// whitespace. `from` is a character boundary.
 fn next_cut(text: &str, mut from: usize) -> Option<usize> {
     loop {
         let cut = from + text[from..].find('\n')? + 1;
-        match text.as_bytes().get(cut) {
-            Some(byte) if !byte.is_ascii_whitespace() => return Some(cut),
-            Some(_) => from = cut,
-            None => return None,
+        let next = match *text.as_bytes().get(cut)? {
+            byte if byte.is_ascii() => char::from(byte),
+            _ => text[cut..].chars().next()?,
+        };
+        if !next.is_whitespace() {
+            return Some(cut);
         }
+        from = cut;
     }
 }
 
@@ -225,6 +241,7 @@ fn unmark(piece: &[u8]) -> Cow<'_, [u8]> {
 }
 
 /// `text` with full-width ASCII forms and the ideographic space written as ASCII, as NFKC does.
+/// Whitespace stays whitespace and other characters stay other characters, so folding moves no cut.
 fn fold_full_width(text: &str) -> Cow<'_, str> {
     let folded = |c: char| match c {
         '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0),
@@ -243,6 +260,10 @@ fn fold_full_width(text: &str) -> Cow<'_, str> {
     {
         at += offset;
         if let Some(ascii) = text[at..].chars().next().and_then(folded) {
+            if output.is_empty() {
+                // Folding only shortens the text.
+                output.reserve(text.len());
+            }
             output.push_str(&text[copied..at]);
             output.push(ascii);
             copied = at + 3;
@@ -262,9 +283,9 @@ mod tests {
 
     #[test]
     fn segments_start_after_a_newline_and_before_other_than_whitespace() {
-        let text = "a\nb\n\nc\n d\r\ne\n";
+        let text = "a\nb\n\nc\n d\r\ne\n\u{3000}f\n";
         let cut: Vec<_> = segments(text).collect();
-        assert_eq!(cut, ["a\n", "b\n\n", "c\n d\r\n", "e\n"]);
+        assert_eq!(cut, ["a\n", "b\n\n", "c\n d\r\n", "e\n\u{3000}f\n"]);
         assert_eq!(segments("").count(), 0);
     }
 }
