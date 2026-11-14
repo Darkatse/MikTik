@@ -1,12 +1,14 @@
 use std::convert::Infallible;
+use std::sync::OnceLock;
 
-use kitoken::Kitoken;
+use kitoken::{Definition, Kitoken};
 
+use crate::artifact;
 use crate::error::TokenizerError;
 use crate::estimate::Estimator;
 use crate::message::Message;
 use crate::model::Model;
-use crate::source::{self, SourceData, SpecialTokens};
+use crate::source::{self, Content, SourceData, SpecialTokens};
 
 /// A loaded tokenizer for one model. It never changes after it loads.
 ///
@@ -14,9 +16,31 @@ use crate::source::{self, SourceData, SpecialTokens};
 /// `estimate_*` methods are fast approximations that never fail; see the crate documentation.
 pub struct Tokenizer {
     model: &'static Model,
+    /// kitoken's serialized definition: what an artifact carries, and what the engine is built from.
+    definition: Box<[u8]>,
+    /// The exact engine. Built when the tokenizer loads from a source, so a source that cannot be
+    /// used fails there; built on first use when it loads from an artifact, which was written from
+    /// a source that loaded.
+    engine: OnceLock<Result<Engine, TokenizerError>>,
+    estimator: Estimator,
+}
+
+/// kitoken, and which special tokens it recognizes.
+struct Engine {
     kitoken: Kitoken,
     specials: SpecialTokens,
-    estimator: Estimator,
+}
+
+impl Engine {
+    fn build(model: &Model, definition: Definition) -> Result<Self, String> {
+        // kitoken panics on an empty vocabulary.
+        if definition.model.vocab().is_empty() {
+            return Err("the vocabulary is empty".to_string());
+        }
+        let specials = SpecialTokens::of(model, &definition.meta);
+        let kitoken = Kitoken::from_definition(definition).map_err(|err| err.to_string())?;
+        Ok(Self { kitoken, specials })
+    }
 }
 
 impl Tokenizer {
@@ -27,18 +51,41 @@ impl Tokenizer {
         source: Option<&SourceData>,
         segment_cache: usize,
     ) -> Result<Self, TokenizerError> {
-        let error = |detail: String| source::load_error(model, source, detail);
-        let definition = source::definition(model, source)?;
-        let specials = SpecialTokens::of(model, &definition);
-        let estimator = Estimator::from_definition(&definition, specials.in_text)
-            .map_err(error)?
-            .with_segment_cache(segment_cache);
-        let kitoken = Kitoken::from_definition(definition).map_err(|err| error(err.to_string()))?;
+        let tokenizer = match source::read(model, source)? {
+            Content::Definition(definition) => Self::from_definition(model, *definition)
+                .map_err(|detail| TokenizerError::Load(source::describe(model, source, detail)))?,
+            Content::Artifact(artifact) => {
+                Self::from_artifact(model, &artifact).map_err(|detail| {
+                    TokenizerError::Artifact(source::describe(model, source, detail))
+                })?
+            }
+        };
+        Ok(Self {
+            estimator: tokenizer.estimator.with_segment_cache(segment_cache),
+            ..tokenizer
+        })
+    }
+
+    fn from_definition(model: &'static Model, definition: Definition) -> Result<Self, String> {
+        let specials = SpecialTokens::of(model, &definition.meta);
+        let estimator = Estimator::from_definition(&definition, specials.in_text)?;
+        let serialized = definition.to_vec().into_boxed_slice();
+        let engine = Engine::build(model, definition)?;
         Ok(Self {
             model,
-            kitoken,
-            specials,
+            definition: serialized,
+            engine: OnceLock::from(Ok(engine)),
             estimator,
+        })
+    }
+
+    fn from_artifact(model: &'static Model, artifact: &[u8]) -> Result<Self, String> {
+        let sections = artifact::read(model, artifact)?;
+        Ok(Self {
+            model,
+            definition: sections.definition.into(),
+            engine: OnceLock::new(),
+            estimator: Estimator::read(sections.estimator)?,
         })
     }
 
@@ -49,7 +96,8 @@ impl Tokenizer {
 
     /// Encodes text into token ids.
     pub fn encode(&self, text: &str) -> Result<Vec<u32>, TokenizerError> {
-        self.encode_with(text, self.specials.in_text)
+        let engine = self.engine()?;
+        self.encode_with(engine, text, engine.specials.in_text)
     }
 
     /// Decodes token ids into text. Fails when the ids decode to bytes that are not UTF-8, such as
@@ -57,9 +105,10 @@ impl Tokenizer {
     pub fn decode(&self, ids: &[u32]) -> Result<String, TokenizerError> {
         let error =
             |err: String| TokenizerError::Decode(format!("model '{}': {err}", self.model.id()));
-        let bytes = self
+        let engine = self.engine()?;
+        let bytes = engine
             .kitoken
-            .decode(ids, self.specials.in_messages)
+            .decode(ids, engine.specials.in_messages)
             .map_err(|err| error(err.to_string()))?;
         String::from_utf8(bytes).map_err(|err| error(err.to_string()))
     }
@@ -71,8 +120,9 @@ impl Tokenizer {
 
     /// Counts chat messages as the model's [`Framing`](crate::Framing) describes.
     pub fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {
+        let engine = self.engine()?;
         self.model.framing().total(messages, |text| {
-            self.encode_with(text, self.specials.in_messages)
+            self.encode_with(engine, text, engine.specials.in_messages)
                 .map(|ids| ids.len())
         })
     }
@@ -105,8 +155,41 @@ impl Tokenizer {
         self.estimator.cumulative(base, additions, stop_at)
     }
 
-    fn encode_with(&self, text: &str, specials: bool) -> Result<Vec<u32>, TokenizerError> {
-        self.kitoken
+    /// The tokenizer as an artifact: register these bytes for the same model, with
+    /// [`register_model_bytes`](crate::TokenizerRegistry::register_model_bytes) or as a file, and
+    /// the model loads without converting its source. Every method of the loaded tokenizer gives the
+    /// same results as this one's. The caller stores the artifact; see
+    /// [`ARTIFACT_VERSION`](crate::ARTIFACT_VERSION).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        artifact::write(self.model, &self.definition, &self.estimator)
+    }
+
+    /// The exact engine, built on first use when the tokenizer loaded from an artifact.
+    fn engine(&self) -> Result<&Engine, TokenizerError> {
+        self.engine
+            .get_or_init(|| {
+                Definition::from_slice(&self.definition)
+                    .map_err(|err| err.to_string())
+                    .and_then(|definition| Engine::build(self.model, definition))
+                    .map_err(|detail| {
+                        TokenizerError::Artifact(format!(
+                            "model '{}', the artifact's definition: {detail}",
+                            self.model.id()
+                        ))
+                    })
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    fn encode_with(
+        &self,
+        engine: &Engine,
+        text: &str,
+        specials: bool,
+    ) -> Result<Vec<u32>, TokenizerError> {
+        engine
+            .kitoken
             .encode(text, specials)
             .map_err(|err| TokenizerError::Encode(format!("model '{}': {err}", self.model.id())))
     }

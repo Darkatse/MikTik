@@ -10,10 +10,11 @@ use crate::tokenizer::Tokenizer;
 /// One tokenizer per model, loaded on first use.
 ///
 /// Built-in models load without registration. Other models need a registered source; registering
-/// only records it, and [`get`](Self::get) reads it. A source registered for a built-in model takes
-/// the place of the built-in encoding. Each model loads at most once at a time and
-/// independently of other models. A failed load is not remembered: the source stays registered and
-/// the next `get` tries again.
+/// only records it, and [`get`](Self::get) reads it. Any model also takes an artifact that
+/// [`Tokenizer::to_bytes`] wrote, which loads in milliseconds; for a built-in model it takes the
+/// place of the built-in encoding. Each model loads at most once at a time and independently of
+/// other models. A failed load is not remembered: the source stays registered and the next `get`
+/// tries again.
 pub struct TokenizerRegistry {
     /// One slot per row of [`Model::all`], in the same order.
     slots: Box<[Mutex<Slot>]>,

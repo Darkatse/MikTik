@@ -5,8 +5,9 @@ use std::borrow::Cow;
 use std::fmt;
 use std::path::PathBuf;
 
-use kitoken::Definition;
+use kitoken::{Definition, Metadata};
 
+use crate::artifact;
 use crate::error::TokenizerError;
 use crate::model::{Encoding, Format, Model, Source};
 
@@ -36,43 +37,54 @@ impl fmt::Display for SourceData {
     }
 }
 
-/// A load failure, naming the model and its source: the registered source when there is one,
-/// otherwise the built-in encoding.
-pub(crate) fn load_error(
+/// What went wrong with a model's source, naming the model and the source: the registered source
+/// when there is one, otherwise the built-in encoding.
+pub(crate) fn describe(
     model: &Model,
     source: Option<&SourceData>,
     detail: impl fmt::Display,
-) -> TokenizerError {
+) -> String {
     let id = model.id();
-    TokenizerError::Load(match (source, model.source()) {
+    match (source, model.source()) {
         (Some(source), _) => format!("model '{id}', source {source}: {detail}"),
         (None, Source::Builtin(encoding)) => {
             format!("model '{id}', built-in {}: {detail}", encoding.name())
         }
         (None, Source::Registered(_)) => format!("model '{id}': {detail}"),
-    })
+    }
 }
 
-/// Converts a model's source to a kitoken definition: the registered source when there is one,
-/// otherwise the built-in encoding.
-pub(crate) fn definition(
+/// What a model's source holds.
+pub(crate) enum Content<'a> {
+    /// A definition converted from a source format or from the built-in encoding.
+    Definition(Box<Definition>),
+    /// An artifact, still to be read.
+    Artifact(Cow<'a, [u8]>),
+}
+
+/// Reads a model's source: the registered source when there is one, otherwise the built-in
+/// encoding. Every model accepts an artifact; a source format must be one the model accepts.
+pub(crate) fn read<'a>(
     model: &Model,
-    source: Option<&SourceData>,
-) -> Result<Definition, TokenizerError> {
+    source: Option<&'a SourceData>,
+) -> Result<Content<'a>, TokenizerError> {
     let Some(source) = source else {
         return match model.source() {
-            Source::Builtin(encoding) => {
-                builtin(encoding).map_err(|err| load_error(model, None, err))
-            }
+            Source::Builtin(encoding) => builtin(encoding)
+                .map(|definition| Content::Definition(Box::new(definition)))
+                .map_err(|detail| TokenizerError::Load(describe(model, None, detail))),
             Source::Registered(_) => Err(TokenizerError::NotRegistered(model.id())),
         };
     };
-    let error = |detail: String| load_error(model, Some(source), detail);
+    let error = |detail: String| TokenizerError::Load(describe(model, Some(source), detail));
 
     let bytes = source.read().map_err(error)?;
+    if artifact::is_artifact(&bytes) {
+        return Ok(Content::Artifact(bytes));
+    }
     let format = sniff(&bytes).ok_or_else(|| {
         error(format!(
-            "not a {}, {} or {}",
+            "not a MikTik artifact, {}, {} or {}",
             Format::TokenizerJson,
             Format::SentencePiece,
             Format::TiktokenRanks
@@ -81,23 +93,21 @@ pub(crate) fn definition(
     match model.source() {
         Source::Builtin(_) => {
             return Err(error(format!(
-                "is a {format}; the model is built in and takes no registered source"
+                "is a {format}; the model is built in and takes only a MikTik artifact"
             )));
         }
         Source::Registered(accepted) if !accepted.contains(&format) => {
             let accepted = accepted.iter().map(Format::to_string).collect::<Vec<_>>();
             return Err(error(format!(
-                "is a {format}; the model accepts {}",
+                "is a {format}; the model accepts a MikTik artifact or {}",
                 accepted.join(" or ")
             )));
         }
         Source::Registered(_) => {}
     }
-    let definition = convert(format, &bytes).map_err(error)?;
-    if definition.model.vocab().is_empty() {
-        return Err(error("the vocabulary is empty".to_string()));
-    }
-    Ok(definition)
+    convert(format, &bytes)
+        .map(|definition| Content::Definition(Box::new(definition)))
+        .map_err(error)
 }
 
 /// Recognizes a source format from its first bytes. Each check accepts only a beginning that the
@@ -171,11 +181,11 @@ fn builtin(encoding: Encoding) -> Result<Definition, String> {
 
 #[cfg(not(feature = "openai"))]
 fn builtin(_: Encoding) -> Result<Definition, String> {
-    Err("built-in encodings need the 'openai' feature".to_string())
+    Err("built-in encodings need the 'openai' feature, or register a MikTik artifact".to_string())
 }
 
 /// Whether control tokens such as `<|endoftext|>` are recognized. The source format decides, and
-/// kitoken records the format of a definition in its metadata.
+/// kitoken records the format of a definition in its metadata, which artifacts keep.
 #[derive(Clone, Copy)]
 pub(crate) struct SpecialTokens {
     /// In `encode` and `count_tokens`.
@@ -185,14 +195,14 @@ pub(crate) struct SpecialTokens {
 }
 
 impl SpecialTokens {
-    pub(crate) fn of(model: &Model, definition: &Definition) -> Self {
+    pub(crate) fn of(model: &Model, meta: &Metadata) -> Self {
         let (in_text, in_messages) = match model.source() {
             // tiktoken's contract: `encode` reads ordinary text, while messages and decoding know
             // the special tokens.
             Source::Builtin(_) => (false, true),
             // SentencePiece control tokens are never text. User-defined pieces are kitoken priority
             // tokens, which match either way.
-            Source::Registered(_) if definition.meta.source == "sentencepiece" => (false, false),
+            Source::Registered(_) if meta.source == "sentencepiece" => (false, false),
             Source::Registered(_) => (true, true),
         };
         Self {

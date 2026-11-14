@@ -31,6 +31,10 @@ pub(crate) struct Estimator {
 /// The character SentencePiece writes for a space.
 const SPACE_MARK: &str = "\u{2581}";
 
+/// The flags an artifact stores before the trie.
+const FOLD: u8 = 1;
+const SPLIT_BEFORE_LAST_NEWLINE: u8 = 2;
+
 impl Estimator {
     /// The pieces are the vocabulary and the special tokens that `count_tokens` recognizes
     /// (`specials_in_text`), spelled as the text they match:
@@ -105,6 +109,31 @@ impl Estimator {
             cache: (capacity > 0).then(|| SegmentCache::new(capacity)),
             ..self
         }
+    }
+
+    /// Appends the estimator as an artifact stores it: its flags, then its trie.
+    pub(crate) fn write(&self, output: &mut Vec<u8>) {
+        let flag = |set: bool, flag: u8| if set { flag } else { 0 };
+        output.push(
+            flag(self.fold, FOLD) | flag(self.split_before_last_newline, SPLIT_BEFORE_LAST_NEWLINE),
+        );
+        self.trie.write(output);
+    }
+
+    /// Reads an estimator that [`write`](Self::write) wrote.
+    pub(crate) fn read(bytes: &[u8]) -> Result<Self, String> {
+        let (&flags, trie) = bytes
+            .split_first()
+            .ok_or("the estimator section is empty")?;
+        if flags & !(FOLD | SPLIT_BEFORE_LAST_NEWLINE) != 0 {
+            return Err(format!("unknown estimator flags {flags:#04x}"));
+        }
+        Ok(Self {
+            trie: Trie::read(trie)?,
+            fold: flags & FOLD != 0,
+            split_before_last_newline: flags & SPLIT_BEFORE_LAST_NEWLINE != 0,
+            cache: None,
+        })
     }
 
     /// The estimate of `text`.

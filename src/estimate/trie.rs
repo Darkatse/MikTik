@@ -1,7 +1,8 @@
 //! A byte-wise double-array trie of pieces: the longest piece a text starts with, in one pass over
 //! the text.
 //!
-//! Every lookup is a checked `get`, so a walk never panics, whatever the units hold.
+//! Every lookup is a checked `get`, so a walk never panics, whatever the units hold: a trie read
+//! from damaged bytes can only give wrong lengths.
 
 /// One state. Its children on bytes `b` are the units `base + b` whose `check` is the state's index
 /// plus one; the root is unit 0, and free units have `check` 0.
@@ -14,6 +15,9 @@ struct Unit {
 
 const END: u32 = 1 << 31;
 const BASE: u32 = END - 1;
+
+/// The size of a unit in [`Trie::write`]: `base`, then `check`, little-endian.
+const UNIT_BYTES: usize = 8;
 
 pub(crate) struct Trie {
     units: Box<[Unit]>,
@@ -111,6 +115,34 @@ impl Trie {
         }
         longest
     }
+
+    /// Appends the units, as [`read`](Self::read) takes them.
+    pub(crate) fn write(&self, output: &mut Vec<u8>) {
+        output.reserve(self.units.len() * UNIT_BYTES);
+        for unit in &self.units {
+            output.extend_from_slice(&unit.base.to_le_bytes());
+            output.extend_from_slice(&unit.check.to_le_bytes());
+        }
+    }
+
+    /// Reads units that [`write`](Self::write) wrote. Only the length is checked.
+    pub(crate) fn read(bytes: &[u8]) -> Result<Self, String> {
+        let (units, rest) = bytes.as_chunks::<UNIT_BYTES>();
+        if units.is_empty() || !rest.is_empty() {
+            return Err(format!(
+                "{} bytes is not a whole number of trie units",
+                bytes.len()
+            ));
+        }
+        let units = units
+            .iter()
+            .map(|&[b0, b1, b2, b3, c0, c1, c2, c3]| Unit {
+                base: u32::from_le_bytes([b0, b1, b2, b3]),
+                check: u32::from_le_bytes([c0, c1, c2, c3]),
+            })
+            .collect();
+        Ok(Self { units })
+    }
 }
 
 fn grow(units: &mut Vec<Unit>, len: usize) {
@@ -162,14 +194,33 @@ mod tests {
             pieces.sort();
             pieces.dedup();
             let trie = Trie::build(&pieces).unwrap();
+            let mut written = Vec::new();
+            trie.write(&mut written);
+            let read = Trie::read(&written).unwrap();
             for _ in 0..50 {
                 let text = random.bytes(10);
-                assert_eq!(
-                    trie.longest(&text),
-                    naive_longest(&pieces, &text),
-                    "{pieces:?} {text:?}"
-                );
+                let longest = naive_longest(&pieces, &text);
+                assert_eq!(trie.longest(&text), longest, "{pieces:?} {text:?}");
+                assert_eq!(read.longest(&text), longest, "{pieces:?} {text:?}");
             }
         }
+    }
+
+    #[test]
+    fn any_bytes_read_as_a_trie_walk_without_panicking() {
+        let mut random = Random(0x2545_F491_4F6C_DD1D);
+        for _ in 0..200 {
+            let units = random.below(64) + 1;
+            let bytes: Vec<u8> = (0..units * UNIT_BYTES)
+                .map(|_| random.below(256) as u8)
+                .collect();
+            let trie = Trie::read(&bytes).unwrap();
+            for _ in 0..20 {
+                let text = random.bytes(12);
+                assert!(trie.longest(&text) <= text.len());
+            }
+        }
+        assert!(Trie::read(&[]).is_err());
+        assert!(Trie::read(&[0; 9]).is_err());
     }
 }

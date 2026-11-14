@@ -10,6 +10,7 @@
 //! The model directory holds a source for every model that needs one, named after the model id
 //! (`claude.json`, `gemma.model`, `kimi.tiktoken`); every `.txt` in the corpus directory is a text.
 //! A text with CRLF line ends is also checked with LF ones, since tokenizers split them differently.
+//! Each model's artifact must give the same exact counts and estimates as its source.
 
 #![cfg(all(
     feature = "openai",
@@ -34,6 +35,7 @@ fn estimates_stay_close_to_exact_counts() {
     let models = directory("MIKTIK_MODEL_DIR");
     let texts = texts(&directory("MIKTIK_CORPUS_DIR"));
     let registry = TokenizerRegistry::new();
+    let artifacts = TokenizerRegistry::new();
     let mut failures = Vec::new();
     for model in Model::all() {
         if let Source::Registered(_) = model.source() {
@@ -42,14 +44,28 @@ fn estimates_stay_close_to_exact_counts() {
                 .unwrap();
         }
         let tokenizer = registry.get(model.id()).unwrap();
+        artifacts
+            .register_model_bytes(model.id(), tokenizer.to_bytes())
+            .unwrap();
+        let from_artifact = artifacts.get(model.id()).unwrap();
         for (name, text) in &texts {
             if let Source::Builtin(encoding) = model.source() {
                 assert_matches_tiktoken(&tokenizer, encoding, name, text);
             }
-            let whole = error(
-                tokenizer.estimate_tokens(text),
+            let (exact, estimate) = (
                 tokenizer.count_tokens(text).unwrap(),
+                tokenizer.estimate_tokens(text),
             );
+            assert_eq!(
+                (
+                    from_artifact.count_tokens(text).unwrap(),
+                    from_artifact.estimate_tokens(text)
+                ),
+                (exact, estimate),
+                "{} on {name}: the artifact differs from the source",
+                model.id()
+            );
+            let whole = error(estimate, exact);
             let p95 = chunk_p95(&tokenizer, text);
             println!(
                 "{:<18} {name:<6} whole {whole:+6.2}%  {CHUNK} B p95 {p95:5.2}%",

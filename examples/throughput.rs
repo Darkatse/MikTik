@@ -9,7 +9,8 @@
 //! core (`taskset` on Android) to measure that core. `cached` is how much faster the estimate of the
 //! first 100 KiB of the text is when the segment cache holds all its segments. With the `parallel`
 //! feature, `threads` is how much faster the estimate of the whole text is on the threads of
-//! rayon's global pool, one per core the process may use.
+//! rayon's global pool, one per core the process may use. `artifact ms` is the time from the
+//! model's artifact, as a file, to a tokenizer that estimates.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -27,8 +28,17 @@ fn main() {
     println!("rayon threads: {}", rayon::current_num_threads());
 
     println!(
-        "{:<18} {:>8}  {:<6} {:>12} {:>14} {:>8} {:>8} {:>8}",
-        "model", "load ms", "text", "exact MB/s", "estimate MB/s", "speedup", "cached", "threads"
+        "{:<18} {:>8} {:>11} {:>12}  {:<6} {:>12} {:>14} {:>8} {:>8} {:>8}",
+        "model",
+        "load ms",
+        "artifact MB",
+        "artifact ms",
+        "text",
+        "exact MB/s",
+        "estimate MB/s",
+        "speedup",
+        "cached",
+        "threads"
     );
     let registry = TokenizerRegistry::new();
     let cached_registry = TokenizerRegistry::with_segment_cache(1 << 30);
@@ -48,6 +58,17 @@ fn main() {
         }
         let (tokenizer, load) = timed(|| registry.get(model.id()).unwrap());
         let cached = cached_registry.get(model.id()).unwrap();
+        let artifact = tokenizer.to_bytes();
+        let artifact_file = std::env::temp_dir().join(format!("miktik-{}.mtk", model.id()));
+        std::fs::write(&artifact_file, &artifact).unwrap();
+        let from_artifact = best(3, || {
+            let registry = TokenizerRegistry::new();
+            registry
+                .register_model_file(model.id(), &artifact_file)
+                .unwrap();
+            registry.get(model.id()).unwrap().estimate_tokens("a")
+        });
+        std::fs::remove_file(&artifact_file).unwrap();
         for (name, text) in &texts {
             let exact = best(3, || tokenizer.count_tokens(text).unwrap());
             let estimate = best(5, || one_thread(|| tokenizer.estimate_tokens(text)));
@@ -57,9 +78,11 @@ fn main() {
             let hit = best(5, || cached.estimate_tokens(head));
             let threads = best(5, || tokenizer.estimate_tokens(text));
             println!(
-                "{:<18} {:>8.1}  {name:<6} {:>12.1} {:>14.1} {:>7.1}x {:>7.1}x {:>7.1}x",
+                "{:<18} {:>8.1} {:>11.1} {:>12.1}  {name:<6} {:>12.1} {:>14.1} {:>7.1}x {:>7.1}x {:>7.1}x",
                 model.id(),
                 millis(load),
+                artifact.len() as f64 / 1e6,
+                millis(from_artifact),
                 megabytes_per_second(text, exact),
                 megabytes_per_second(text, estimate),
                 exact.as_secs_f64() / estimate.as_secs_f64(),

@@ -41,12 +41,14 @@ fn sources_must_be_a_format_the_model_accepts() {
     registry
         .register_model_bytes("claude", b"not a tokenizer".to_vec())
         .unwrap();
-    assert!(load_error(&registry, "claude").contains("not a tokenizer.json"));
+    assert!(load_error(&registry, "claude").contains("not a MikTik artifact"));
 
     registry
         .register_model_bytes("claude", support::sentencepiece_model())
         .unwrap();
-    assert!(load_error(&registry, "claude").contains("accepts tokenizer.json"));
+    assert!(
+        load_error(&registry, "claude").contains("accepts a MikTik artifact or tokenizer.json")
+    );
 
     registry
         .register_model_bytes("gpt-4o", support::TOKENIZER_JSON)

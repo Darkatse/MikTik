@@ -16,9 +16,10 @@ pub struct Model {
 /// Where a model's tokenizer comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// An OpenAI encoding embedded in the crate (`openai` feature).
+    /// An OpenAI encoding embedded in the crate (`openai` feature). A registered artifact takes its
+    /// place.
     Builtin(Encoding),
-    /// A source the caller registers, in one of these formats.
+    /// A source the caller registers: an artifact, or a source in one of these formats.
     Registered(&'static [Format]),
 }
 

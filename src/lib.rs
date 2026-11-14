@@ -48,7 +48,23 @@
 //! the estimates of recent segments, and text estimated again, such as a chat that grows at its
 //! end, costs only its new segments. The cache changes no result.
 //!
+//! ## Artifacts
+//!
+//! Converting a source and deriving its estimates takes from tens of milliseconds to seconds on a
+//! phone. [`Tokenizer::to_bytes`] writes both into an artifact; registered for the same model, the
+//! artifact loads in milliseconds, and the tokenizer it loads gives the same results. The exact
+//! engine is built from the artifact on first exact use, so a caller that only estimates never
+//! pays for it.
+//!
+//! MikTik writes no files: the caller stores artifacts, writing them atomically. An artifact of
+//! another [`ARTIFACT_VERSION`], of another model, cut short or damaged fails with
+//! [`TokenizerError::Artifact`], at [`TokenizerRegistry::get`] or, for a damaged definition, at the
+//! first exact call; the caller then builds it again from the source.
+//!
 //! ## Features
+//!
+//! Features decide which source formats can be converted. Artifacts load with any features, or
+//! none.
 //!
 //! - `openai` (default): the built-in OpenAI encodings.
 //! - `huggingface`: `tokenizer.json` sources.
@@ -63,6 +79,7 @@
 
 #![forbid(unsafe_code)]
 
+mod artifact;
 mod error;
 mod estimate;
 mod message;
@@ -71,6 +88,7 @@ mod registry;
 mod source;
 mod tokenizer;
 
+pub use artifact::ARTIFACT_VERSION;
 pub use error::TokenizerError;
 pub use message::Message;
 pub use model::{Encoding, Format, Framing, Model, Source};
