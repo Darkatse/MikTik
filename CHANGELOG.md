@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.2
+
+### Changed
+
+- Rows count what their providers add around chat messages, measured with
+  `scripts/provider-count-check.py`: `claude`, `qwen2`, `qwen3.5`, `deepseek`, `glm` and `minimax`
+  counted message content only, and `kimi` frames each message with one more token.
+  `count_messages` and `estimate_messages` of these rows change; text counts do not.
+
+### Added
+
+- Rows for families whose models frame messages differently from the rest of their family: `gpt-5`
+  (o200k, for GPT-5 and later and the o-series; their names resolved to `gpt-4o`), `kimi-k3` (Kimi's
+  tokenizer, for Kimi K3; resolved to `kimi`) and `gemini` (Gemma 3's tokenizer, for Gemini; resolved
+  to `gemma`).
+- `scripts/provider-count-check.py` compares a row's framing with the provider's, and the `count`
+  example counts JSON message lists.
+
+### Migration
+
+- A caller that registers sources registers `gemini` (Gemma 3's `tokenizer.model`) and `kimi-k3`
+  (Kimi's tiktoken file) as well; until then their names fail with `NotRegistered`.
+
 ## 0.5.1
 
 ### Added

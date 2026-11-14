@@ -31,17 +31,17 @@ let estimate = claude.estimate_messages(&[Message::new("user", "What is Rust?")]
 `Model::all()` is the table of tokenizers MikTik knows. Each row has an id, a source and a message
 framing:
 
-- The OpenAI encodings ship with the crate: `gpt-4o` (o200k), `gpt-4` and `gpt-3.5-turbo-0301`
-  (cl100k) and `gpt2` (r50k).
-- The other rows, for Claude, Llama, Mistral, Gemma and Gemini, Qwen and Qwen 3.5, DeepSeek, Kimi,
-  GLM, MiniMax, Command R and A, Nemo, Yi, Jamba and NerdStash, take a source you register with
-  `register_model_file` or `register_model_bytes`: a `tokenizer.json`, a SentencePiece model or a
-  tiktoken rank file, as the row accepts. The format is recognized from the content. The
+- The OpenAI encodings ship with the crate: `gpt-4o` and `gpt-5` (o200k), `gpt-4` and
+  `gpt-3.5-turbo-0301` (cl100k) and `gpt2` (r50k).
+- The other rows, for Claude, Llama, Mistral, Gemini and Gemma, Qwen and Qwen 3.5, DeepSeek, Kimi
+  and Kimi K3, GLM, MiniMax, Command R and A, Nemo, Yi, Jamba and NerdStash, take a source you
+  register with `register_model_file` or `register_model_bytes`: a `tokenizer.json`, a
+  SentencePiece model or a tiktoken rank file, as the row accepts. The format is recognized from the content. The
   repository's `scripts/fetch-test-assets.sh` names a pinned source for every row.
 
 `Model::resolve` maps a model name to a row: it trims the name, compares it without regard to case,
 drops a provider prefix such as `openai/`, and then tries ordered rules, so `qwen3-max` resolves to
-`qwen2`, `qwen3.6-plus` to `qwen3.5` and `gemini-3.1-pro` to `gemma`. A name no rule knows resolves
+`qwen2`, `qwen3.6-plus` to `qwen3.5` and `gemini-3.1-pro` to `gemini`. A name no rule knows resolves
 to nothing, and `TokenizerRegistry::get` returns `TokenizerError::UnknownModel`; which tokenizer to
 use instead is the caller's choice.
 
@@ -51,10 +51,19 @@ Gemini 4 and Grok resolve to the closest row, within 1% and 3.1% on the test tex
 the tokenizer Anthropic published for Claude 2; Claude 3 to 4.6 count within 2% of it on English
 and 11% more on Chinese, and Claude 4.7 and later about 25% fewer on English.
 
+A row's framing is what its provider adds around chat messages, measured the same way: the script
+counts a user, an assistant and a user message against the first one alone. `count_messages` and
+`estimate_messages` count each such pair of messages as the provider does, or one token over. Some
+templates frame the two roles differently (Kimi K3 adds 11 tokens to a user message and 23 to an
+assistant one), so a single message is off by half the difference. A default system prompt that
+some providers add to every request (DeepSeek, MiniMax, Kimi K3, Grok) is not counted. Rows whose framing no provider has been measured for count only message content:
+Llama, Mistral, Nemo, Yi, Gemma, Jamba, Command R and A, and NerdStash.
+
 ## Exact counts and estimates
 
-`encode`, `decode`, `count_tokens` and `count_messages` are exact. They return `Result`, since the
-engine may still have to be built.
+`encode`, `decode`, `count_tokens` and `count_messages` are exact; `count_messages` adds the row's
+framing to the exact counts of each role and content. They return `Result`, since the engine may
+still have to be built.
 
 The `estimate_*` methods never fail and are 3 to 50 times faster than exact counting on one core,
 depending on the model, the text and the processor. An

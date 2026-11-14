@@ -129,7 +129,7 @@ fn registering_again_replaces_the_source() {
 #[test]
 fn names_of_one_model_share_one_tokenizer() {
     let registry = TokenizerRegistry::new();
-    let names = ["gpt-4o", "o3-mini", "openai/gpt-5", "chatgpt-4o-latest"];
+    let names = ["gpt-5", "o3-mini", "openai/gpt-5", "gpt-6-astra"];
     let start = std::sync::Barrier::new(names.len());
     let tokenizers = std::thread::scope(|scope| {
         let handles = names.map(|name| {

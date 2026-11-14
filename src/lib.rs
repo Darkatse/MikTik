@@ -9,8 +9,8 @@
 //!   back to.
 //! - [`TokenizerRegistry`] holds one [`Tokenizer`] per model and loads it on first use. Built-in
 //!   models need nothing; the others need a registered source.
-//! - [`Tokenizer`] encodes, decodes and counts tokens, and counts chat messages with the model's
-//!   [`Framing`]. These results are exact.
+//! - [`Tokenizer`] encodes, decodes and counts tokens exactly, and counts chat messages with the
+//!   tokens the model's provider adds around them, its [`Framing`].
 //!
 //! ```no_run
 //! use miktik::{Message, TokenizerRegistry};

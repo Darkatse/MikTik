@@ -1,6 +1,6 @@
 [package]
 name = "miktik"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.92"
 description = "Exact token counts and fast estimates for LLM tokenizers: OpenAI encodings, Hugging Face tokenizer.json, SentencePiece and tiktoken files"
@@ -37,4 +37,5 @@ features = ["std", "serialization", "normalization", "regex-perf", "regex-unicod
 
 [dev-dependencies]
 base64 = "0.22"
+serde_json = "1"
 tiktoken-rs = "0.12"

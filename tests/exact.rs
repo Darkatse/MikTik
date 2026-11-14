@@ -158,11 +158,12 @@ fn tokenizer_json_recognizes_special_tokens() {
 
     assert_eq!(claude.encode("hello<|end|>").unwrap(), [1, 3]);
     assert_eq!(claude.decode(&[1, 3]).unwrap(), "hello <|end|>");
-    let messages = [
-        Message::new("user", "hello"),
-        Message::new("assistant", "world"),
-    ];
-    assert_eq!(claude.count_messages(&messages).unwrap(), 2);
+    let count = |content| {
+        claude
+            .count_messages(&[Message::new("user", content)])
+            .unwrap()
+    };
+    assert_eq!(count("hello<|end|>"), count("hello") + 1);
 }
 
 #[cfg(feature = "sentencepiece")]
@@ -190,7 +191,7 @@ fn tiktoken_rank_files_recognize_special_tokens() {
     registry
         .register_model_bytes("kimi", support::kimi_ranks())
         .unwrap();
-    let kimi = registry.get("kimi-k3").unwrap();
+    let kimi = registry.get("kimi-k2.6").unwrap();
 
     // Kimi's pattern keeps runs of Han characters together, so `你好` merges.
     assert_eq!(kimi.encode("你好ab").unwrap(), [259, 256]);
@@ -200,9 +201,9 @@ fn tiktoken_rank_files_recognize_special_tokens() {
         kimi.encode("<|im_end|>").unwrap(),
         [support::KIMI_VOCAB_LEN]
     );
-    let user = kimi.count_tokens("user").unwrap();
-    assert_eq!(
-        kimi.count_messages(&[Message::new("user", "ab")]).unwrap(),
-        3 + 3 + user + 1
-    );
+    let count = |content| {
+        kimi.count_messages(&[Message::new("user", content)])
+            .unwrap()
+    };
+    assert_eq!(count("ab<|im_end|>"), count("ab") + 1);
 }

@@ -398,13 +398,14 @@ dependencies = [
 
 [[package]]
 name = "miktik"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "base64 0.22.1",
  "foldhash",
  "hashbrown",
  "kitoken",
  "rayon",
+ "serde_json",
  "thiserror 2.0.18",
  "tiktoken-rs",
 ]

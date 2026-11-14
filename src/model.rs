@@ -65,16 +65,26 @@ impl fmt::Display for Format {
     }
 }
 
-/// How chat messages are counted.
+/// How a model's provider counts chat messages: the tokens its chat template adds to their roles
+/// and contents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Framing {
-    /// ChatML: a fixed number of tokens for each message and for the reply primer, on top of each
-    /// message's role and content.
+    /// Each message adds `per_message` tokens to its role and content, and a request adds
+    /// `per_reply` tokens that prime the reply, as in ChatML. Every chat format that frames each
+    /// message is described this way.
+    ///
+    /// `per_message` is half of what a user message and an assistant message add to their roles and
+    /// contents, as the provider counts them in a conversation, rounded up: each such pair counts
+    /// exactly, or one token over where the half was rounded. Where the template frames the two
+    /// roles differently, as GPT-5's does, a single message is off by half the difference.
+    /// `per_reply` is the reply primer of the model's chat template or, where the template is not
+    /// published, what the provider counts for a one-message request beyond that message. A
+    /// provider that adds a default system prompt to every request counts it as well; no row does.
     ChatMl {
         per_message: usize,
         per_reply: usize,
     },
-    /// Only message content counts.
+    /// Only message content counts: no provider's framing has been measured for the row.
     ContentOnly,
 }
 
@@ -158,10 +168,12 @@ impl Model {
     }
 }
 
-const CHAT_ML: Framing = Framing::ChatMl {
-    per_message: 3,
-    per_reply: 3,
-};
+const fn chat_ml(per_message: usize, per_reply: usize) -> Framing {
+    Framing::ChatMl {
+        per_message,
+        per_reply,
+    }
+}
 const CONTENT_ONLY: Framing = Framing::ContentOnly;
 const JSON: &[Format] = &[Format::TokenizerJson];
 const SENTENCEPIECE_OR_JSON: &[Format] = &[Format::SentencePiece, Format::TokenizerJson];
@@ -172,34 +184,33 @@ const TIKTOKEN_RANKS: &[Format] = &[Format::TiktokenRanks];
 /// Each row is a distinct tokenizer, so no two rows share both source and framing. A built-in row
 /// is named after one model that uses its encoding; the names of the others resolve to it.
 static MODELS: &[Model] = &[
-    Model::builtin("gpt-4o", Encoding::O200kBase, CHAT_ML),
-    Model::builtin("gpt-4", Encoding::Cl100kBase, CHAT_ML),
+    Model::builtin("gpt-4o", Encoding::O200kBase, chat_ml(3, 3)),
+    Model::builtin("gpt-5", Encoding::O200kBase, chat_ml(4, 2)),
+    Model::builtin("gpt-4", Encoding::Cl100kBase, chat_ml(3, 3)),
     // This snapshot framed each message with one more token.
-    Model::builtin(
-        "gpt-3.5-turbo-0301",
-        Encoding::Cl100kBase,
-        Framing::ChatMl {
-            per_message: 4,
-            per_reply: 3,
-        },
-    ),
-    Model::builtin("gpt2", Encoding::R50kBase, CHAT_ML),
-    Model::registered("claude", JSON, CONTENT_ONLY),
+    Model::builtin("gpt-3.5-turbo-0301", Encoding::Cl100kBase, chat_ml(4, 3)),
+    Model::builtin("gpt2", Encoding::R50kBase, chat_ml(3, 3)),
+    // Claude 4.7 and later frame each message with one more token.
+    Model::registered("claude", JSON, chat_ml(2, 4)),
     Model::registered("llama3", JSON, CONTENT_ONLY),
     Model::registered("command-r", JSON, CONTENT_ONLY),
     Model::registered("command-a", JSON, CONTENT_ONLY),
-    Model::registered("qwen2", JSON, CONTENT_ONLY),
-    Model::registered("qwen3.5", JSON, CONTENT_ONLY),
+    Model::registered("qwen2", JSON, chat_ml(4, 3)),
+    // The reply primer holds an empty thinking block.
+    Model::registered("qwen3.5", JSON, chat_ml(4, 7)),
     Model::registered("nemo", JSON, CONTENT_ONLY),
-    Model::registered("deepseek", JSON, CONTENT_ONLY),
-    Model::registered("glm", JSON, CONTENT_ONLY),
-    Model::registered("minimax", JSON, CONTENT_ONLY),
-    // Kimi's chat template frames each message with three special tokens and primes the reply with
-    // three tokens, as ChatML does.
-    Model::registered("kimi", TIKTOKEN_RANKS, CHAT_ML),
+    Model::registered("deepseek", JSON, chat_ml(1, 2)),
+    Model::registered("glm", JSON, chat_ml(1, 2)),
+    Model::registered("minimax", JSON, chat_ml(5, 4)),
+    Model::registered("kimi", TIKTOKEN_RANKS, chat_ml(4, 3)),
+    // Kimi K3 wraps each message in tags and its role in an attribute.
+    Model::registered("kimi-k3", TIKTOKEN_RANKS, chat_ml(16, 10)),
     Model::registered("llama", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
     Model::registered("mistral", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
     Model::registered("yi", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
+    // Gemini counts each message's role and content and nothing for the reply. Gemma has the same
+    // source, but no provider's framing of it has been measured.
+    Model::registered("gemini", SENTENCEPIECE_OR_JSON, chat_ml(0, 0)),
     Model::registered("gemma", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
     Model::registered("jamba", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
     Model::registered("nerdstash", SENTENCEPIECE_OR_JSON, CONTENT_ONLY),
@@ -214,19 +225,22 @@ type Rule = (&'static str, fn(&str) -> bool);
 /// that would wrongly match its names.
 const RULES: &[Rule] = &[
     ("gpt2", |name| name == "gpt-2"),
-    ("gpt-4o", |name| {
+    ("gpt-5", |name| {
         ["o1", "o3", "o4", "gpt-5", "gpt-6"]
             .iter()
             .any(|prefix| name.starts_with(prefix))
-            || (name.contains("gpt-4") && contains_any(name, &["4o", "4.1", "4.5"]))
+    }),
+    ("gpt-4o", |name| {
+        name.contains("gpt-4") && contains_any(name, &["4o", "4.1", "4.5"])
     }),
     ("gpt-4", |name| {
         contains_any(name, &["gpt-4", "gpt-3.5", "gpt-35"])
     }),
     ("claude", |name| name.contains("claude")),
-    ("kimi", |name| {
-        name.contains("kimi") || name == "k3" || name.starts_with("k3-")
+    ("kimi-k3", |name| {
+        name.contains("kimi-k3") || name == "k3" || name.starts_with("k3-")
     }),
+    ("kimi", |name| name.contains("kimi")),
     ("llama3", |name| contains_any(name, &["llama3", "llama-3"])),
     ("llama", |name| name.contains("llama")),
     ("nemo", |name| contains_any(name, &["nemo", "pixtral"])),
@@ -243,9 +257,8 @@ const RULES: &[Rule] = &[
     ("yi", |name| name.contains("yi")),
     // Gemini 3 counts exactly as Gemma 3; Gemini 4 publishes no tokenizer and counts within about
     // 1% of it on the public texts.
-    ("gemma", |name| {
-        contains_any(name, &["gemma", "gemini", "learnlm"])
-    }),
+    ("gemini", |name| contains_any(name, &["gemini", "learnlm"])),
+    ("gemma", |name| name.contains("gemma")),
     ("jamba", |name| name.contains("jamba")),
     ("nerdstash_v2", |name| {
         contains_any(name, &["nerdstash-v2", "nerdstash_v2"])
@@ -261,6 +274,7 @@ const RULES: &[Rule] = &[
     ("minimax", |name| name.contains("minimax")),
     // xAI publishes no tokenizer for its current models. On the public texts Qwen2's counts are
     // within 3.1% of Grok 4.3 and 4.20 and 2.6% of Grok 4.5 to 4.7; o200k's are 16% off on Chinese.
+    // Grok 4.3 frames each message with one token fewer than Qwen.
     ("qwen2", |name| name.contains("grok")),
 ];
 
@@ -314,11 +328,11 @@ mod tests {
     fn rules_map_names_to_models() {
         for (name, id) in [
             ("gpt-2", "gpt2"),
-            ("o1", "gpt-4o"),
-            ("o3-mini", "gpt-4o"),
-            ("openai/gpt-5", "gpt-4o"),
-            ("gpt-5.2", "gpt-4o"),
-            ("gpt-6-astra", "gpt-4o"),
+            ("o1", "gpt-5"),
+            ("o3-mini", "gpt-5"),
+            ("openai/gpt-5", "gpt-5"),
+            ("gpt-5.2", "gpt-5"),
+            ("gpt-6-astra", "gpt-5"),
             ("chatgpt-4o-latest", "gpt-4o"),
             ("gpt-4.1-mini", "gpt-4o"),
             ("gpt-4.5-preview", "gpt-4o"),
@@ -329,13 +343,15 @@ mod tests {
             ("gpt-35-turbo", "gpt-4"),
             ("claude-3-5-sonnet", "claude"),
             ("moonshotai/kimi-k2.6", "kimi"),
-            ("k3-256k", "kimi"),
+            ("k3-256k", "kimi-k3"),
+            ("kimi-k3.1-pro", "kimi-k3"),
             ("llama-2-7b", "llama"),
             ("mistral-large", "mistral"),
             ("yi-large", "yi"),
-            ("gemini-3.8-flash", "gemma"),
-            ("models/gemini-3.1-pro-preview", "gemma"),
-            ("learnlm-pro", "gemma"),
+            ("gemini-3.8-flash", "gemini"),
+            ("models/gemini-3.1-pro-preview", "gemini"),
+            ("learnlm-pro", "gemini"),
+            ("gemma-3-27b-it", "gemma"),
             ("jamba-1.5-large", "jamba"),
             ("nerdstash-v1", "nerdstash"),
             ("command-r-plus", "command-r"),

@@ -27,6 +27,7 @@ MikTik is a general-purpose tokenizer library for LLMs. TauriTavern is one of it
 3. Add a representative name to the resolution tests.
 4. Add a source for it to `scripts/fetch-test-assets.sh`, pinned by hash, and run the corpus test.
 5. Compare the row with its provider: `scripts/provider-count-check.py <row> <provider> <model>…` for the models it serves. A model enters the table only if its exact count equals the provider's on every piece and its estimates pass the corpus test.
+6. Set the row's framing from the same run, as `Framing` documents: `per_message` is half of what the provider adds for an assistant and a user message beyond their contents, less the two roles' tokens, rounded up; `per_reply` is the reply primer of the chat template, or what the provider adds to a one-message request where the template is not published. The rerun must then show the row within one token of the provider's pair. A family whose models frame messages differently gets a row per framing, even on one source; a row whose framing no provider has been measured for is `ContentOnly`.
 
 A model whose provider publishes no tokenizer resolves to its family's own row if the family published one. Otherwise its names may resolve to another family's row whose counts on each public text are within 5% of the provider's, with the measured difference written next to the rule; if no row is that close, they resolve to nothing and the caller chooses a fallback.
 

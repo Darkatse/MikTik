@@ -52,12 +52,15 @@ fetch $models/deepseek.json $web_tokenizers/deepseek.json.gz a8d67ac5efa0def0716
 fetch $models/qwen3.5.json $qwen3_5/tokenizer.json 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
 fetch $models/glm.json $glm/tokenizer.json 19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d
 fetch $models/minimax.json $minimax/tokenizer.json bb1f1626cf01448f1e3b6036d0a061ffc66c91d9046aada14ea23a5441b5ad6e
+# Kimi K2 and K3 share a tokenizer and frame messages differently.
 fetch $models/kimi.tiktoken $kimi/tiktoken.model b6c497a7469b33ced9c38afb1ad6e47f03f5e5dc05f15930799210ec050c5103
+fetch $models/kimi-k3.tiktoken $kimi/tiktoken.model b6c497a7469b33ced9c38afb1ad6e47f03f5e5dc05f15930799210ec050c5103
 fetch $models/llama.model $sillytavern/llama.model 9e556afd44213b6bd1be2b850ebbbd98f5481437a8021afaf58ee7fb1818d347
 fetch $models/mistral.model $sillytavern/mistral.model dadfd56d766715c61d2ef780a525ab43b8e6da4de6865bda3d95fdef5e134055
 fetch $models/yi.model $sillytavern/yi.model 386c49cf943d71aa110361135338c50e38beeff0a66593480421f37b319e1a39
-# Gemma 3's tokenizer, which Gemini 3 shares.
+# Gemma 3's tokenizer, which Gemini 3 shares; each row reads a file named after it.
 fetch $models/gemma.model $gemma3/tokenizer.model 1299c11d7cf632ef3b4e11937501358ada021bbdf7c47638d13c0ee982f2e79c
+fetch $models/gemini.model $gemma3/tokenizer.model 1299c11d7cf632ef3b4e11937501358ada021bbdf7c47638d13c0ee982f2e79c
 fetch $models/jamba.model $sillytavern/jamba.model 8b0df4fb43262c452ef37061951a06df4c63ca191d02a60ea08f14428af24376
 fetch $models/nerdstash.model $sillytavern/nerdstash.model 578fa0ed4d6dbee435f21d7f7a741506d09cdd93cce241008abf725407cbdb41
 fetch $models/nerdstash_v2.model $sillytavern/nerdstash_v2.model 005ad680b10f1abd406bdb0ca9c6a5d83fc1f6e0a855bdd1942c1ceab1fb47ab
