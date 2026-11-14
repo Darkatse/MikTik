@@ -79,24 +79,6 @@ mod openai {
         "|>",
     ];
 
-    /// Texts of random fragments from a fixed seed.
-    fn random_texts(count: usize) -> Vec<String> {
-        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
-        let mut next = move |bound: usize| {
-            // xorshift64*
-            state ^= state >> 12;
-            state ^= state << 25;
-            state ^= state >> 27;
-            (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % bound
-        };
-        (0..count)
-            .map(|_| {
-                let len = 1 + next(40);
-                (0..len).map(|_| FRAGMENTS[next(FRAGMENTS.len())]).collect()
-            })
-            .collect()
-    }
-
     /// `encode` treats special tokens as text; message counting and `decode` know them.
     fn assert_matches(model: &str, reference: &CoreBPE) {
         let tokenizer = TokenizerRegistry::new().get(model).unwrap();
@@ -110,7 +92,7 @@ mod openai {
         let role = reference.encode_with_special_tokens("user").len();
 
         let texts = FIXED.iter().map(|text| text.to_string());
-        for text in texts.chain(random_texts(2_000)) {
+        for text in texts.chain(crate::support::random_texts(FRAGMENTS, 2_000, 40)) {
             assert_eq!(
                 tokenizer.encode(&text).unwrap(),
                 reference.encode_ordinary(&text),

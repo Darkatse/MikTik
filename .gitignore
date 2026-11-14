@@ -35,3 +35,6 @@ coverage/
 
 # Local Test
 .local/
+
+# Python bytecode from the scripts
+__pycache__/

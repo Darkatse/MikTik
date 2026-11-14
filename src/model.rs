@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use crate::message::Message;
+
 /// A tokenizer identity, such as `gpt-4o`, `claude` or `gemma`: one row of MikTik's model table.
 ///
 /// Models exist only as `&'static Model`, obtained from [`Model::all`] or [`Model::resolve`].
@@ -73,6 +75,27 @@ pub enum Framing {
     },
     /// Only message content counts.
     ContentOnly,
+}
+
+impl Framing {
+    /// The tokens of `messages`, given the tokens of a role or a content.
+    pub(crate) fn total<E>(
+        self,
+        messages: &[Message],
+        mut count: impl FnMut(&str) -> Result<usize, E>,
+    ) -> Result<usize, E> {
+        match self {
+            Self::ChatMl {
+                per_message,
+                per_reply,
+            } => messages.iter().try_fold(per_reply, |total, message| {
+                Ok(total + per_message + count(&message.role)? + count(&message.content)?)
+            }),
+            Self::ContentOnly => messages
+                .iter()
+                .try_fold(0, |total, message| Ok(total + count(&message.content)?)),
+        }
+    }
 }
 
 impl Model {

@@ -48,7 +48,7 @@ pub const TOKENIZER_JSON: &str = r###"{
 }"###;
 
 /// A BPE SentencePiece model: `<unk>` 0, the control tokens `<s>` 1 and `</s>` 2, then `▁` 3, `a` 4,
-/// `b` 5 and the merge `ab` 6.
+/// `b` 5, the merge `ab` 6 and the user-defined piece `▁▁▁` 7, like Gemma's runs of spaces.
 pub fn sentencepiece_model() -> Vec<u8> {
     // The ModelProto is written field by field, following sentencepiece_model.proto, so the tests
     // need no protobuf library.
@@ -60,6 +60,7 @@ pub fn sentencepiece_model() -> Vec<u8> {
         piece("a", 0.0, 1),
         piece("b", 0.0, 1),
         piece("ab", 10.0, 1),
+        piece("▁▁▁", 0.0, 4),
     ];
     let mut model = Vec::new();
     for value in pieces {
@@ -130,6 +131,26 @@ pub fn kimi_ranks() -> Vec<u8> {
         .collect::<Vec<_>>()
         .join("\n")
         .into_bytes()
+}
+
+/// `count` texts of 1 to `max_len` fragments, drawn from a fixed seed so failures reproduce.
+pub fn random_texts(fragments: &[&str], count: usize, max_len: usize) -> Vec<String> {
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut below = move |bound: usize| {
+        // xorshift64*
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % bound
+    };
+    (0..count)
+        .map(|_| {
+            let len = 1 + below(max_len);
+            (0..len)
+                .map(|_| fragments[below(fragments.len())])
+                .collect()
+        })
+        .collect()
 }
 
 /// A path in the system temp directory that no other test uses.

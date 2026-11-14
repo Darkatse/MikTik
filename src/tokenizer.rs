@@ -1,15 +1,22 @@
+use std::convert::Infallible;
+
 use kitoken::Kitoken;
 
 use crate::error::TokenizerError;
+use crate::estimate::Estimator;
 use crate::message::Message;
-use crate::model::{Framing, Model};
+use crate::model::Model;
 use crate::source::{self, SourceData, SpecialTokens};
 
 /// A loaded tokenizer for one model. It never changes after it loads.
+///
+/// The `count_*` methods, [`encode`](Self::encode) and [`decode`](Self::decode) are exact. The
+/// `estimate_*` methods are fast approximations that never fail; see the crate documentation.
 pub struct Tokenizer {
     model: &'static Model,
     kitoken: Kitoken,
     specials: SpecialTokens,
+    estimator: Estimator,
 }
 
 impl Tokenizer {
@@ -17,14 +24,16 @@ impl Tokenizer {
         model: &'static Model,
         source: Option<&SourceData>,
     ) -> Result<Self, TokenizerError> {
+        let error = |detail: String| source::load_error(model, source, detail);
         let definition = source::definition(model, source)?;
         let specials = SpecialTokens::of(model, &definition);
-        let kitoken = Kitoken::from_definition(definition)
-            .map_err(|err| source::load_error(model, source, err))?;
+        let estimator = Estimator::from_definition(&definition, specials.in_text).map_err(error)?;
+        let kitoken = Kitoken::from_definition(definition).map_err(|err| error(err.to_string()))?;
         Ok(Self {
             model,
             kitoken,
             specials,
+            estimator,
         })
     }
 
@@ -55,23 +64,40 @@ impl Tokenizer {
         self.encode(text).map(|ids| ids.len())
     }
 
-    /// Counts chat messages as the model's [`Framing`] describes.
+    /// Counts chat messages as the model's [`Framing`](crate::Framing) describes.
     pub fn count_messages(&self, messages: &[Message]) -> Result<usize, TokenizerError> {
-        let count = |text: &str| {
+        self.model.framing().total(messages, |text| {
             self.encode_with(text, self.specials.in_messages)
                 .map(|ids| ids.len())
-        };
-        match self.model.framing() {
-            Framing::ChatMl {
-                per_message,
-                per_reply,
-            } => messages.iter().try_fold(per_reply, |total, message| {
-                Ok(total + per_message + count(&message.role)? + count(&message.content)?)
-            }),
-            Framing::ContentOnly => messages
-                .iter()
-                .try_fold(0, |total, message| Ok(total + count(&message.content)?)),
-        }
+        })
+    }
+
+    /// Estimates the tokens in the text.
+    pub fn estimate_tokens(&self, text: &str) -> usize {
+        self.estimator.estimate(text)
+    }
+
+    /// Estimates chat messages as the model's [`Framing`](crate::Framing) describes, with each role
+    /// and content estimated by [`estimate_tokens`](Self::estimate_tokens).
+    pub fn estimate_messages(&self, messages: &[Message]) -> usize {
+        let Ok(total) = self.model.framing().total(messages, |text| {
+            Ok::<_, Infallible>(self.estimate_tokens(text))
+        });
+        total
+    }
+
+    /// Estimates `base` followed by each prefix of `additions`: the `i`th result is
+    /// [`estimate_tokens`](Self::estimate_tokens) of `base + additions[0] + … + additions[i]`. The
+    /// cost grows with the total length rather than with the sum of the prefixes' lengths.
+    ///
+    /// Once a result reaches `stop_at`, the remaining results repeat it.
+    pub fn estimate_cumulative_token_counts(
+        &self,
+        base: &str,
+        additions: &[impl AsRef<str>],
+        stop_at: Option<usize>,
+    ) -> Vec<usize> {
+        self.estimator.cumulative(base, additions, stop_at)
     }
 
     fn encode_with(&self, text: &str, specials: bool) -> Result<Vec<u32>, TokenizerError> {
