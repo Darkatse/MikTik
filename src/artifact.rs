@@ -18,7 +18,8 @@ use crate::model::Model;
 
 /// The version of the artifact format, which [`Tokenizer::to_bytes`](crate::Tokenizer::to_bytes)
 /// writes and registration accepts. It changes whenever an artifact would no longer mean the same
-/// thing, so an artifact of another version fails with
+/// thing, including with every upgrade of kitoken, whose serialized definition an artifact holds.
+/// An artifact of another version fails with
 /// [`TokenizerError::Artifact`](crate::TokenizerError::Artifact) and is rebuilt from its source.
 pub const ARTIFACT_VERSION: u32 = 1;
 

@@ -36,7 +36,9 @@
 //! - Full-width forms are folded to ASCII if the tokenizer normalizes them, and the text is cut
 //!   into segments after each newline that is followed by something other than whitespace.
 //! - Each segment is covered from its start; every step takes the longest piece the rest starts
-//!   with, or one byte where no piece does.
+//!   with, or one byte where no piece does. Where the tokenizer's split gives the last whitespace
+//!   character before a word to the word, as GPT-2's does, a newline that ends a segment after
+//!   other whitespace counts as a token of its own.
 //! - The pieces are the vocabulary and the special tokens that [`Tokenizer::count_tokens`]
 //!   recognizes. All of this is derived from the tokenizer's definition, not from the model's name.
 //!
@@ -46,7 +48,8 @@
 //!
 //! Because segments add up, a registry made with [`TokenizerRegistry::with_segment_cache`] keeps
 //! the estimates of recent segments, and text estimated again, such as a chat that grows at its
-//! end, costs only its new segments. The cache changes no result.
+//! end, costs only its new segments and those longer than the cache keeps. The cache changes no
+//! result.
 //!
 //! ## Artifacts
 //!
@@ -57,9 +60,11 @@
 //! pays for it.
 //!
 //! MikTik writes no files: the caller stores artifacts, writing them atomically. An artifact of
-//! another [`ARTIFACT_VERSION`], of another model, cut short or damaged fails with
-//! [`TokenizerError::Artifact`], at [`TokenizerRegistry::get`] or, for a damaged definition, at the
-//! first exact call; the caller then builds it again from the source.
+//! another [`ARTIFACT_VERSION`], of another model or cut short fails with
+//! [`TokenizerError::Artifact`] at [`TokenizerRegistry::get`], and one whose definition kitoken
+//! cannot read fails with it at the first exact call; the caller then builds it again from the
+//! source. Artifacts carry no checksum, so damage that still reads changes results without an
+//! error.
 //!
 //! ## Features
 //!

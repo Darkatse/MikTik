@@ -15,8 +15,8 @@ pub enum TokenizerError {
     #[error("failed to load tokenizer: {0}")]
     Load(String),
 
-    /// An artifact is of another version or another model, is truncated, or holds a definition
-    /// that cannot be used. Build it again from the model's source.
+    /// An artifact is of another version or another model, is cut short, or holds a definition
+    /// kitoken cannot read. Build it again from the model's source.
     #[error("unusable tokenizer artifact: {0}")]
     Artifact(String),
 

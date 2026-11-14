@@ -23,6 +23,14 @@ pub(crate) struct Trie {
     units: Box<[Unit]>,
 }
 
+/// A walk along a text from the root.
+pub(crate) struct Walk {
+    /// The length of the longest piece the text starts with; 0 when none does.
+    pub(crate) longest: usize,
+    /// The walk reached the end of the text. Only then can text after it give a longer piece.
+    pub(crate) ran_out: bool,
+}
+
 impl Trie {
     /// The trie of `pieces`, which must be sorted and unique; empty pieces are never matched. Fails
     /// only when the pieces need more units than a base can address.
@@ -94,9 +102,9 @@ impl Trie {
         })
     }
 
-    /// The length of the longest piece `text` starts with; 0 when none does.
+    /// Walks along `text` while it continues a piece.
     #[inline]
-    pub(crate) fn longest(&self, text: &[u8]) -> usize {
+    pub(crate) fn walk(&self, text: &[u8]) -> Walk {
         let mut longest = 0;
         let mut state = 0;
         let mut unit = self.units.first().copied().unwrap_or_default();
@@ -110,10 +118,18 @@ impl Trie {
                         longest = at + 1;
                     }
                 }
-                _ => break,
+                _ => {
+                    return Walk {
+                        longest,
+                        ran_out: false,
+                    };
+                }
             }
         }
-        longest
+        Walk {
+            longest,
+            ran_out: true,
+        }
     }
 
     /// Appends the units, as [`read`](Self::read) takes them.
@@ -200,8 +216,18 @@ mod tests {
             for _ in 0..50 {
                 let text = random.bytes(10);
                 let longest = naive_longest(&pieces, &text);
-                assert_eq!(trie.longest(&text), longest, "{pieces:?} {text:?}");
-                assert_eq!(read.longest(&text), longest, "{pieces:?} {text:?}");
+                let walk = trie.walk(&text);
+                assert_eq!(walk.longest, longest, "{pieces:?} {text:?}");
+                assert_eq!(read.walk(&text).longest, longest, "{pieces:?} {text:?}");
+                // A walk that stopped inside the text gives the same piece however it continues.
+                if !walk.ran_out {
+                    let longer = [text.clone(), random.bytes(6)].concat();
+                    assert_eq!(
+                        naive_longest(&pieces, &longer),
+                        longest,
+                        "{pieces:?} {longer:?}"
+                    );
+                }
             }
         }
     }
@@ -217,7 +243,7 @@ mod tests {
             let trie = Trie::read(&bytes).unwrap();
             for _ in 0..20 {
                 let text = random.bytes(12);
-                assert!(trie.longest(&text) <= text.len());
+                assert!(trie.walk(&text).longest <= text.len());
             }
         }
         assert!(Trie::read(&[]).is_err());

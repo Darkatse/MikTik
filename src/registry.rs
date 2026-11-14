@@ -35,8 +35,9 @@ impl TokenizerRegistry {
     }
 
     /// A registry whose tokenizers each keep the estimates of recent segments, up to
-    /// `capacity_bytes` of segment text. Estimates are the same with and without the cache; text
-    /// that is estimated again, such as a long chat that grows at its end, is estimated faster.
+    /// `capacity_bytes` of segment text; a segment longer than 1/32 of that is not kept. Estimates
+    /// are the same with and without the cache; text that is estimated again, such as a long chat
+    /// that grows at its end, is estimated faster.
     pub fn with_segment_cache(capacity_bytes: usize) -> Self {
         Self {
             slots: Model::all()

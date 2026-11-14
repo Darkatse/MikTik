@@ -173,6 +173,8 @@ impl Estimator {
         let mut open = 0;
         // Cuts before this position are counted in `closed`.
         let mut from = 0;
+        // The segment at `open`, which later additions may still extend.
+        let mut last = OpenSegment::default();
         let mut estimates = Vec::with_capacity(additions.len());
         let mut folded = String::new();
         for addition in additions {
@@ -180,6 +182,7 @@ impl Estimator {
             while let Some(cut) = next_cut(&text, from) {
                 closed += self.segment(&text[open..cut], &mut folded);
                 (open, from) = (cut, cut);
+                last = OpenSegment::default();
             }
             // A newline that ends the text becomes a cut when the next addition starts with
             // something other than whitespace.
@@ -189,7 +192,7 @@ impl Estimator {
                 text.len()
             };
 
-            let estimate = closed + self.segment(&text[open..], &mut folded);
+            let estimate = closed + self.extend(&mut last, &text[open..], &mut folded);
             estimates.push(estimate);
             if stop_at.is_some_and(|limit| estimate >= limit) {
                 estimates.resize(additions.len(), estimate);
@@ -209,30 +212,78 @@ impl Estimator {
     }
 
     fn cover_segment(&self, segment: &str, folded: &mut String) -> usize {
-        let segment = if self.fold {
-            fold_full_width(segment, folded)
-        } else {
-            segment
-        };
-        let bytes = segment.as_bytes();
-        match bytes {
-            // Other text follows the segment, unless it ends the text, so the newline is a token of
-            // its own: whatever starts the next segment rarely forms one token with it.
-            [.., space, b'\n'] if self.split_before_last_newline && space.is_ascii_whitespace() => {
-                self.cover(&bytes[..bytes.len() - 1]) + 1
+        let (covered, newline) = self.covered(self.fold(segment, folded).as_bytes());
+        self.cover(covered) + newline
+    }
+
+    /// The estimate of `segment`, the text of `last` and what was added to it since. Steps of the
+    /// cover that more text cannot change are kept in `last`, so the cost grows with what was added
+    /// rather than with the whole segment.
+    fn extend(&self, last: &mut OpenSegment, segment: &str, folded: &mut String) -> usize {
+        // Folding maps each character on its own.
+        let added = self.fold(&segment[last.raw_len..], folded);
+        last.folded.push_str(added);
+        last.raw_len = segment.len();
+
+        let (covered, newline) = self.covered(last.folded.as_bytes());
+        let (mut at, mut tokens) = (last.settled, last.settled_tokens);
+        let mut settled = true;
+        while at < covered.len() {
+            let walk = self.trie.walk(&covered[at..]);
+            at += walk.longest.max(1);
+            tokens += 1;
+            // A walk that stopped inside the text takes the same step however the text continues,
+            // and the covered part only grows.
+            settled &= !walk.ran_out;
+            if settled {
+                (last.settled, last.settled_tokens) = (at, tokens);
             }
-            _ => self.cover(bytes),
+        }
+        tokens + newline
+    }
+
+    fn fold<'a>(&self, text: &'a str, folded: &'a mut String) -> &'a str {
+        if self.fold {
+            fold_full_width(text, folded)
+        } else {
+            text
+        }
+    }
+
+    /// The part of a folded segment to cover, and the tokens that follow it: other text follows the
+    /// segment, unless it ends the text, so where the split starts a part at its last newline, a
+    /// newline after other whitespace is a token of its own.
+    fn covered<'a>(&self, segment: &'a [u8]) -> (&'a [u8], usize) {
+        match segment {
+            [rest @ .., space, b'\n']
+                if self.split_before_last_newline && space.is_ascii_whitespace() =>
+            {
+                (&segment[..rest.len() + 1], 1)
+            }
+            _ => (segment, 0),
         }
     }
 
     fn cover(&self, mut text: &[u8]) -> usize {
         let mut tokens = 0;
         while !text.is_empty() {
-            text = &text[self.trie.longest(text).max(1)..];
+            text = &text[self.trie.walk(text).longest.max(1)..];
             tokens += 1;
         }
         tokens
     }
+}
+
+/// The last segment of a growing text, folded, and the steps of its cover that more text cannot
+/// change.
+#[derive(Default)]
+struct OpenSegment {
+    folded: String,
+    /// The bytes of the caller's text folded so far.
+    raw_len: usize,
+    /// Where the settled steps end in `folded`, and how many there are.
+    settled: usize,
+    settled_tokens: usize,
 }
 
 /// The segments of `text`, in order.
