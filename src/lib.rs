@@ -46,10 +46,11 @@
 //! its segments. On the texts MikTik is tested with, every model's estimate of a whole book is
 //! within 2% of the exact count, and 95% of 1 KiB pieces are within 5%.
 //!
-//! Because segments add up, a registry made with [`TokenizerRegistry::with_segment_cache`] keeps
-//! the estimates of recent segments, and text estimated again, such as a chat that grows at its
-//! end, costs only its new segments and those longer than the cache keeps. The cache changes no
-//! result.
+//! Because segments add up, [`Tokenizer::estimate_cumulative_token_counts`] estimates every prefix
+//! of a growing text in time proportional to its length, and a registry made with
+//! [`TokenizerRegistry::with_segment_cache`] keeps the estimates of recent segments, so text
+//! estimated again, such as a chat that grows at its end, costs only its new segments and those
+//! longer than the cache keeps. The cache changes no result.
 //!
 //! ## Artifacts
 //!

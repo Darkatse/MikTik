@@ -63,6 +63,13 @@ MIKTIK_MODEL_DIR=.local/models MIKTIK_CORPUS_DIR=.local/corpora \
 - Android: build with `--target aarch64-linux-android`, the NDK's `aarch64-linux-android29-clang` as `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`, push the binary and `.local/` to `/data/local/tmp`, and run under `taskset 80` (the prime core) and `taskset 1` (a little core). For `parallel`, set `RAYON_NUM_THREADS` to the number of cores in the mask: the phone pauses idle cores, so rayon's default counts fewer.
 - Gemini shares Gemma 3's tokenizer. `scripts/gemini-count-check.py` compares the `gemma` row with Gemini's `countTokens` on the public-domain texts; the API key is read from `GEMINI_API_KEY` and sent only as a header.
 
+## Releasing
+
+1. Run the commands above and the corpus test.
+2. Add the version to `CHANGELOG.md`: what changed for callers, with a migration note for anything that breaks.
+3. Set `version` in `Cargo.toml` and run `cargo publish --dry-run --locked`.
+4. Publish, then tag the commit `vX.Y.Z`.
+
 ## MSRV
 
 `rust-version` is the highest `rust-version` among the required dependencies (kitoken 0.11.1 needs 1.92). Raise it in the same commit as the dependency that needs it.

@@ -1,17 +1,17 @@
 [package]
 name = "miktik"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.92"
-description = "Tokenizers for LLMs: OpenAI encodings, Hugging Face tokenizer.json, SentencePiece and tiktoken rank files through one engine"
+description = "Exact token counts and fast estimates for LLM tokenizers: OpenAI encodings, Hugging Face tokenizer.json, SentencePiece and tiktoken files"
 license = "MIT"
 repository = "https://github.com/Darkatse/MikTik"
 homepage = "https://github.com/Darkatse/MikTik"
 documentation = "https://docs.rs/miktik"
 readme = "README.md"
-keywords = ["llm", "tokenizer", "tiktoken", "huggingface", "rust"]
+keywords = ["llm", "tokenizer", "tiktoken", "sentencepiece", "huggingface"]
 categories = ["text-processing"]
-include = ["/src", "/assets", "/tests", "/Cargo.toml", "/README.md", "/LICENSE"]
+include = ["/src", "/assets", "/tests", "/Cargo.toml", "/README.md", "/CHANGELOG.md", "/LICENSE"]
 
 [features]
 default = ["openai"]
