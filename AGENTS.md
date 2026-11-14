@@ -15,7 +15,7 @@ MikTik is a general-purpose tokenizer library for LLMs. TauriTavern is one of it
 1. **Model facts are written once.** A model's id, source and message framing live only in the model table (`src/model.rs`), and name resolution only produces rows of that table. Nothing else branches on a model id. Which special tokens each operation recognizes follows from the source format (`SpecialTokens` in `src/source.rs`).
 2. **A source is checked when it loads.** `get` converts the source and builds the engine, so a source that cannot be used fails there, with an error naming the model and the source, and stays registered for the next try. A loaded `Tokenizer` never changes.
 3. **Exact results have a reference.** The built-in encodings match tiktoken-rs id for id (`tests/exact.rs`). Their rank files are OpenAI's (hashes in `assets/openai/README.md`); their split patterns and special tokens are tiktoken's, written in `src/source.rs`.
-4. **Estimates follow from the definition and add up.** `src/estimate/` derives the pieces, the folding and the newline rule from the kitoken definition, never from a model id. An estimate is the sum of its segments' estimates, so cumulative estimates equal the estimates of each prefix, and the segment cache, keyed by the segment's text, changes no estimate (`tests/estimate.rs`). `tests/corpus.rs` bounds the error of every model on real texts.
+4. **Estimates follow from the definition and add up.** `src/estimate/` derives the pieces, the folding and the newline rule from the kitoken definition, never from a model id. An estimate is the sum of its segments' estimates, so cumulative estimates equal the estimates of each prefix, the segment cache, keyed by the segment's text, changes no estimate, and `parallel` sums groups that end at cuts (`tests/estimate.rs`). `tests/corpus.rs` bounds the error of every model on real texts.
 5. **No `unsafe`.** The crate is `#![forbid(unsafe_code)]`. No input bytes can cause undefined behavior.
 6. **The only I/O is reading files the caller registers.** No network access, no writes.
 
@@ -58,7 +58,7 @@ MIKTIK_MODEL_DIR=.local/models MIKTIK_CORPUS_DIR=.local/corpora \
 `examples/throughput.rs` reports load time and exact and estimated throughput per model, on one thread. Compare figures from the same machine, run back to back.
 
 - Desktop: `cargo run --release --all-features --example throughput -- .local/models .local/corpora [model…]`, pinned to one core (`taskset -c 2` on Linux).
-- Android: build with `--target aarch64-linux-android`, the NDK's `aarch64-linux-android29-clang` as `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`, push the binary and `.local/` to `/data/local/tmp`, and run under `taskset 80` (the prime core) and `taskset 1` (a little core).
+- Android: build with `--target aarch64-linux-android`, the NDK's `aarch64-linux-android29-clang` as `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`, push the binary and `.local/` to `/data/local/tmp`, and run under `taskset 80` (the prime core) and `taskset 1` (a little core). For `parallel`, set `RAYON_NUM_THREADS` to the number of cores in the mask: the phone pauses idle cores, so rayon's default counts fewer.
 - Gemini shares Gemma 3's tokenizer. `scripts/gemini-count-check.py` compares the `gemma` row with Gemini's `countTokens` on the public-domain texts; the API key is read from `GEMINI_API_KEY` and sent only as a header.
 
 ## MSRV

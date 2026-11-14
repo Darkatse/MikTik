@@ -5,6 +5,8 @@
 //! depends only on the text and adds up across cuts.
 
 mod cache;
+#[cfg(feature = "parallel")]
+mod parallel;
 mod trie;
 
 use std::borrow::Cow;
@@ -107,7 +109,18 @@ impl Estimator {
 
     /// The estimate of `text`.
     pub(crate) fn estimate(&self, text: &str) -> usize {
-        segments(text).map(|segment| self.segment(segment)).sum()
+        #[cfg(feature = "parallel")]
+        if text.len() >= parallel::MIN_LEN {
+            return parallel::sum(text, |group| self.serial(group));
+        }
+        self.serial(text)
+    }
+
+    fn serial(&self, text: &str) -> usize {
+        let mut folded = String::new();
+        segments(text)
+            .map(|segment| self.segment(segment, &mut folded))
+            .sum()
     }
 
     /// The estimates of `base + additions[..=i]` for each `i`, each equal to [`estimate`] of that
@@ -132,10 +145,11 @@ impl Estimator {
         // Cuts before this position are counted in `closed`.
         let mut from = 0;
         let mut estimates = Vec::with_capacity(additions.len());
+        let mut folded = String::new();
         for addition in additions {
             text.push_str(addition.as_ref());
             while let Some(cut) = next_cut(&text, from) {
-                closed += self.segment(&text[open..cut]);
+                closed += self.segment(&text[open..cut], &mut folded);
                 (open, from) = (cut, cut);
             }
             // A newline that ends the text becomes a cut when the next addition starts with
@@ -146,7 +160,7 @@ impl Estimator {
                 text.len()
             };
 
-            let estimate = closed + self.segment(&text[open..]);
+            let estimate = closed + self.segment(&text[open..], &mut folded);
             estimates.push(estimate);
             if stop_at.is_some_and(|limit| estimate >= limit) {
                 estimates.resize(additions.len(), estimate);
@@ -156,18 +170,20 @@ impl Estimator {
         estimates
     }
 
-    fn segment(&self, segment: &str) -> usize {
+    /// The estimate of a segment. `folded` is room for the folded segment, reused from segment to
+    /// segment.
+    fn segment(&self, segment: &str, folded: &mut String) -> usize {
         match &self.cache {
-            Some(cache) => cache.get_or(segment, || self.cover_segment(segment)),
-            None => self.cover_segment(segment),
+            Some(cache) => cache.get_or(segment, || self.cover_segment(segment, folded)),
+            None => self.cover_segment(segment, folded),
         }
     }
 
-    fn cover_segment(&self, segment: &str) -> usize {
+    fn cover_segment(&self, segment: &str, folded: &mut String) -> usize {
         let segment = if self.fold {
-            fold_full_width(segment)
+            fold_full_width(segment, folded)
         } else {
-            Cow::Borrowed(segment)
+            segment
         };
         let bytes = segment.as_bytes();
         match bytes {
@@ -240,10 +256,11 @@ fn unmark(piece: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(unmarked)
 }
 
-/// `text` with full-width ASCII forms and the ideographic space written as ASCII, as NFKC does.
-/// Whitespace stays whitespace and other characters stay other characters, so folding moves no cut.
-fn fold_full_width(text: &str) -> Cow<'_, str> {
-    let folded = |c: char| match c {
+/// `text` with full-width ASCII forms and the ideographic space written as ASCII, as NFKC does,
+/// written into `folded` when anything changes. Whitespace stays whitespace and other characters
+/// stay other characters, so folding moves no cut.
+fn fold_full_width<'a>(text: &'a str, folded: &'a mut String) -> &'a str {
+    let ascii = |c: char| match c {
         '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0),
         '\u{3000}' => Some(' '),
         _ => None,
@@ -251,7 +268,7 @@ fn fold_full_width(text: &str) -> Cow<'_, str> {
     // In UTF-8 these characters start with 0xEF or 0xE3, which only ever start three-byte
     // characters, so the text between them is copied as it is.
     let bytes = text.as_bytes();
-    let mut output = String::new();
+    folded.clear();
     let mut copied = 0;
     let mut at = 0;
     while let Some(offset) = bytes[at..]
@@ -259,22 +276,18 @@ fn fold_full_width(text: &str) -> Cow<'_, str> {
         .position(|&byte| byte == 0xEF || byte == 0xE3)
     {
         at += offset;
-        if let Some(ascii) = text[at..].chars().next().and_then(folded) {
-            if output.is_empty() {
-                // Folding only shortens the text.
-                output.reserve(text.len());
-            }
-            output.push_str(&text[copied..at]);
-            output.push(ascii);
+        if let Some(ascii) = text[at..].chars().next().and_then(ascii) {
+            folded.push_str(&text[copied..at]);
+            folded.push(ascii);
             copied = at + 3;
         }
         at += 3;
     }
-    if output.is_empty() {
-        return Cow::Borrowed(text);
+    if copied == 0 {
+        return text;
     }
-    output.push_str(&text[copied..]);
-    Cow::Owned(output)
+    folded.push_str(&text[copied..]);
+    folded
 }
 
 #[cfg(test)]

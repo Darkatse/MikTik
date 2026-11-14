@@ -116,6 +116,26 @@ fn the_segment_cache_changes_no_estimate() {
 
 #[cfg(feature = "openai")]
 #[test]
+fn long_texts_add_up_across_cuts() {
+    // Each part starts after the newline that ends the one before it. Together they are several
+    // times longer than the 256 KiB from which the `parallel` feature estimates in groups.
+    let parts: Vec<String> = support::random_texts(FRAGMENTS, 20_000, 30)
+        .into_iter()
+        .map(|text| format!("x{text}\n"))
+        .collect();
+    let text = parts.concat();
+    for registry in [
+        TokenizerRegistry::new(),
+        TokenizerRegistry::with_segment_cache(64 * 1024),
+    ] {
+        let gpt = registry.get("gpt-4o").unwrap();
+        let sum: usize = parts.iter().map(|part| gpt.estimate_tokens(part)).sum();
+        assert_eq!(gpt.estimate_tokens(&text), sum);
+    }
+}
+
+#[cfg(feature = "openai")]
+#[test]
 fn special_tokens_that_text_does_not_produce_are_not_pieces() {
     let gpt = TokenizerRegistry::new().get("gpt-4o").unwrap();
     assert!(gpt.estimate_tokens("<|endoftext|>") > 1);

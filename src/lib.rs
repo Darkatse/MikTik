@@ -55,6 +55,11 @@
 //! - `sentencepiece`: SentencePiece model sources.
 //! - `tiktoken-bpe`: tiktoken rank file sources.
 //! - `full`: all of the above.
+//! - `parallel`: estimates of texts of 256 KiB or more are computed in groups of segments on
+//!   [rayon](https://docs.rs/rayon)'s threads: the current pool's when called inside one, otherwise
+//!   the global pool's. The caller decides how many threads there are; rayon sizes its global pool
+//!   by the cores the process sees when the pool starts, which on phones that pause idle cores can
+//!   be fewer than the cores there are.
 
 #![forbid(unsafe_code)]
 

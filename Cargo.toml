@@ -20,10 +20,12 @@ huggingface = ["kitoken/convert-tokenizers"]
 sentencepiece = ["kitoken/convert-sentencepiece"]
 tiktoken-bpe = ["kitoken/convert-tiktoken"]
 full = ["openai", "huggingface", "sentencepiece", "tiktoken-bpe"]
+parallel = ["dep:rayon"]
 
 [dependencies]
 foldhash = { version = "0.2", default-features = false }
 hashbrown = { version = "0.17", default-features = false }
+rayon = { version = "1.10", optional = true }
 thiserror = "2"
 
 [dependencies.kitoken]
