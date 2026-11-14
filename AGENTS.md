@@ -29,7 +29,7 @@ MikTik is a general-purpose tokenizer library for LLMs. TauriTavern is one of it
 
 ## Upgrading kitoken
 
-kitoken is the only engine, so an upgrade can change any exact result. Before taking one:
+kitoken is the only engine, so an upgrade can change any exact result, and artifacts hold its serialized definitions. It is pinned with `=` so that only a MikTik release changes it; a downstream lockfile cannot swap it under stored artifacts. Before taking a new version:
 
 - Run the full test matrix; `tests/exact.rs` compares the built-in encodings with tiktoken-rs and checks each format's special-token rule. Run the corpus test too: the estimator reads the definition's vocabulary, special tokens, normalization and split.
 - Read the changes to the converters and to how `encode` splits around special tokens. MikTik's built-in definitions depend on special tokens with `extract: false` being split only where they are recognized.

@@ -28,8 +28,10 @@ hashbrown = { version = "0.17", default-features = false }
 rayon = { version = "1.10", optional = true }
 thiserror = "2"
 
+# Exact: artifacts hold kitoken's serialized definitions, and exact results and estimates are
+# verified against this version. Upgrade it as AGENTS.md describes.
 [dependencies.kitoken]
-version = "0.11.1"
+version = "=0.11.1"
 default-features = false
 features = ["std", "serialization", "normalization", "regex-perf", "regex-unicode", "multiversion"]
 
