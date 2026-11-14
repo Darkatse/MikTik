@@ -33,17 +33,23 @@ framing:
 
 - The OpenAI encodings ship with the crate: `gpt-4o` (o200k), `gpt-4` and `gpt-3.5-turbo-0301`
   (cl100k) and `gpt2` (r50k).
-- The other rows, for Claude, Llama, Mistral, Gemma and Gemini, Qwen, DeepSeek, Kimi, Command R
-  and A, Nemo, Yi, Jamba and NerdStash, take a source you register with `register_model_file` or
-  `register_model_bytes`: a `tokenizer.json`, a SentencePiece model or a tiktoken rank file, as
-  the row accepts. The format is recognized from the content. SillyTavern ships suitable files,
-  and the repository's `scripts/fetch-test-assets.sh` names a pinned source for every row.
+- The other rows, for Claude, Llama, Mistral, Gemma and Gemini, Qwen and Qwen 3.5, DeepSeek, Kimi,
+  GLM, MiniMax, Command R and A, Nemo, Yi, Jamba and NerdStash, take a source you register with
+  `register_model_file` or `register_model_bytes`: a `tokenizer.json`, a SentencePiece model or a
+  tiktoken rank file, as the row accepts. The format is recognized from the content. The
+  repository's `scripts/fetch-test-assets.sh` names a pinned source for every row.
 
 `Model::resolve` maps a model name to a row: it trims the name, compares it without regard to case,
 drops a provider prefix such as `openai/`, and then tries ordered rules, so `qwen3-max` resolves to
-`qwen2` and `gemini-3.1-pro` to `gemma`. A name no rule knows resolves to nothing, and
-`TokenizerRegistry::get` returns `TokenizerError::UnknownModel`; which tokenizer to use instead is
-the caller's choice.
+`qwen2`, `qwen3.6-plus` to `qwen3.5` and `gemini-3.1-pro` to `gemma`. A name no rule knows resolves
+to nothing, and `TokenizerRegistry::get` returns `TokenizerError::UnknownModel`; which tokenizer to
+use instead is the caller's choice.
+
+A row's exact counts equal those of the models it serves, as their providers count them; the
+repository's `scripts/provider-count-check.py` compares them. A few providers publish no tokenizer:
+Gemini 4 and Grok resolve to the closest row, within 1% and 3.1% on the test texts. Claude's row is
+the tokenizer Anthropic published for Claude 2; Claude 3 to 4.6 count within 2% of it on English
+and 11% more on Chinese, and Claude 4.7 and later about 25% fewer on English.
 
 ## Exact counts and estimates
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.1
+
+### Added
+
+- Rows `qwen3.5` (Qwen 3.5 and later), `glm` (GLM 4.5 to 5.3) and `minimax` (MiniMax M3). Their exact
+  counts equal those of Alibaba Cloud, Zhipu and MiniMax on the test texts.
+- `scripts/provider-count-check.py`, which compares a row with a provider's own counts. It replaces
+  `scripts/gemini-count-check.py`.
+
+### Changed
+
+- `qwen3.5` and later resolve to `qwen3.5`; unversioned names such as `qwen-plus` and earlier versions
+  stay on `qwen2`.
+- Grok resolves to `qwen2`, the closest row to xAI's counts: within 3.1% on English and Chinese.
+- `mistral-nemo` and `pixtral` resolve to `nemo`; `mixtral` to `mistral`; `tongyi` to `qwen2`; and
+  `mai-ds`, `r1-1776` and `sonar-reasoning` to `deepseek`.
+
 ## 0.5.0
 
 MikTik now reads every format through kitoken, describes its models in one public table, and adds

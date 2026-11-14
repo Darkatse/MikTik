@@ -25,7 +25,10 @@ MikTik is a general-purpose tokenizer library for LLMs. TauriTavern is one of it
 1. Add a row to `MODELS` in `src/model.rs`: id, source (built-in encoding or accepted formats) and framing. A row is a distinct tokenizer: if another row already has the same source and framing, add a resolution rule to that row instead, so the tokenizer loads once.
 2. If names other than the id should resolve to it, add a rule to `RULES`, before the first rule that would match those names wrongly.
 3. Add a representative name to the resolution tests.
-4. Add a source for it to `scripts/fetch-test-assets.sh`, pinned by hash, and run the corpus test. A model enters the table only if its estimates pass.
+4. Add a source for it to `scripts/fetch-test-assets.sh`, pinned by hash, and run the corpus test.
+5. Compare the row with its provider: `scripts/provider-count-check.py <row> <provider> <model>…` for the models it serves. A model enters the table only if its exact count equals the provider's on every piece and its estimates pass the corpus test.
+
+A model whose provider publishes no tokenizer resolves to its family's own row if the family published one. Otherwise its names may resolve to another family's row whose counts on each public text are within 5% of the provider's, with the measured difference written next to the rule; if no row is that close, they resolve to nothing and the caller chooses a fallback.
 
 ## Upgrading kitoken
 
@@ -61,7 +64,7 @@ MIKTIK_MODEL_DIR=.local/models MIKTIK_CORPUS_DIR=.local/corpora \
 
 - Desktop: `cargo run --release --all-features --example throughput -- .local/models .local/corpora [model…]`, pinned to one core (`taskset -c 2` on Linux).
 - Android: build with `--target aarch64-linux-android`, the NDK's `aarch64-linux-android29-clang` as `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`, push the binary and `.local/` to `/data/local/tmp`, and run under `taskset 80` (the prime core) and `taskset 1` (a little core). For `parallel`, set `RAYON_NUM_THREADS` to the number of cores in the mask: the phone pauses idle cores, so rayon's default counts fewer.
-- Gemini shares Gemma 3's tokenizer. `scripts/gemini-count-check.py` compares the `gemma` row with Gemini's `countTokens` on the public-domain texts; the API key is read from `GEMINI_API_KEY` and sent only as a header.
+- `scripts/provider-count-check.py` compares a row with a provider's own counts on the public-domain texts (see "Adding a model"); its docstring lists the providers and the environment variable of each key.
 
 ## Releasing
 

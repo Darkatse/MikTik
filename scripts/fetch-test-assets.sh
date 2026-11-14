@@ -9,6 +9,9 @@ sillytavern=https://raw.githubusercontent.com/SillyTavern/SillyTavern/7e8663cd9c
 web_tokenizers=https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/798bcd823dfd04227a79b487e1cf29e6de9aaece
 kimi=https://huggingface.co/moonshotai/Kimi-K2-Instruct/resolve/fd1984e2b7a3350dbf7305fe73a4ede25c14de50
 gemma3=https://huggingface.co/unsloth/gemma-3-1b-it/resolve/5b11413a10db4e486ef16a20101fd028f8f2499c
+qwen3_5=https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/2fc06364715b967f1860aea9cf38778875588b17
+glm=https://huggingface.co/zai-org/GLM-5.2/resolve/cf457fa734ab149ffef225f80893eb38c6ff5cdc
+minimax=https://huggingface.co/MiniMaxAI/MiniMax-M3/resolve/d95e30cb912fe3021bb9c2ba66a8ce60b6c937a9
 gutenberg=https://www.gutenberg.org/cache/epub
 
 sha256() {
@@ -46,6 +49,9 @@ fetch $models/command-a.json $web_tokenizers/command-a.json.gz c6a9a15bf2175a05f
 fetch $models/qwen2.json $web_tokenizers/qwen2.json.gz fb366a22efb7db2dcca2c619402431cda342a97721395a2da2879ceb36262782
 fetch $models/nemo.json $web_tokenizers/nemo.json.gz d27c2739d2d9ad785baa78f62ed23e79984246cb3e29c25d6cb5f43d9d00a6a9
 fetch $models/deepseek.json $web_tokenizers/deepseek.json.gz a8d67ac5efa0def0716d813ccd9b288eaae51654221eb30112fb603cf241b247
+fetch $models/qwen3.5.json $qwen3_5/tokenizer.json 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+fetch $models/glm.json $glm/tokenizer.json 19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d
+fetch $models/minimax.json $minimax/tokenizer.json bb1f1626cf01448f1e3b6036d0a061ffc66c91d9046aada14ea23a5441b5ad6e
 fetch $models/kimi.tiktoken $kimi/tiktoken.model b6c497a7469b33ced9c38afb1ad6e47f03f5e5dc05f15930799210ec050c5103
 fetch $models/llama.model $sillytavern/llama.model 9e556afd44213b6bd1be2b850ebbbd98f5481437a8021afaf58ee7fb1818d347
 fetch $models/mistral.model $sillytavern/mistral.model dadfd56d766715c61d2ef780a525ab43b8e6da4de6865bda3d95fdef5e134055

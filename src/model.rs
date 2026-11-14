@@ -189,8 +189,11 @@ static MODELS: &[Model] = &[
     Model::registered("command-r", JSON, CONTENT_ONLY),
     Model::registered("command-a", JSON, CONTENT_ONLY),
     Model::registered("qwen2", JSON, CONTENT_ONLY),
+    Model::registered("qwen3.5", JSON, CONTENT_ONLY),
     Model::registered("nemo", JSON, CONTENT_ONLY),
     Model::registered("deepseek", JSON, CONTENT_ONLY),
+    Model::registered("glm", JSON, CONTENT_ONLY),
+    Model::registered("minimax", JSON, CONTENT_ONLY),
     // Kimi's chat template frames each message with three special tokens and primes the reply with
     // three tokens, as ChatML does.
     Model::registered("kimi", TIKTOKEN_RANKS, CHAT_ML),
@@ -226,8 +229,20 @@ const RULES: &[Rule] = &[
     }),
     ("llama3", |name| contains_any(name, &["llama3", "llama-3"])),
     ("llama", |name| name.contains("llama")),
-    ("mistral", |name| name.contains("mistral")),
+    ("nemo", |name| contains_any(name, &["nemo", "pixtral"])),
+    ("mistral", |name| {
+        contains_any(name, &["mistral", "mixtral"])
+    }),
+    // Qwen 3.5 changed the vocabulary; Tongyi models are built on Qwen 3.
+    ("qwen3.5", |name| {
+        qwen_version(name).is_some_and(|version| version >= (3, 5))
+    }),
+    ("qwen2", |name| {
+        contains_any(name, &["qwen", "qwq", "tongyi"])
+    }),
     ("yi", |name| name.contains("yi")),
+    // Gemini 3 counts exactly as Gemma 3; Gemini 4 publishes no tokenizer and counts within about
+    // 1% of it on the public texts.
     ("gemma", |name| {
         contains_any(name, &["gemma", "gemini", "learnlm"])
     }),
@@ -238,13 +253,39 @@ const RULES: &[Rule] = &[
     ("nerdstash", |name| name.contains("nerdstash")),
     ("command-r", |name| name.contains("command-r")),
     ("command-a", |name| name.contains("command-a")),
-    ("qwen2", |name| contains_any(name, &["qwen", "qwq"])),
-    ("nemo", |name| name.contains("nemo")),
-    ("deepseek", |name| name.contains("deepseek")),
+    // MAI-DS-R1, R1 1776 and Sonar Reasoning are built on DeepSeek R1.
+    ("deepseek", |name| {
+        contains_any(name, &["deepseek", "mai-ds", "r1-1776", "sonar-reasoning"])
+    }),
+    ("glm", |name| name.contains("glm")),
+    ("minimax", |name| name.contains("minimax")),
+    // xAI publishes no tokenizer for its current models. On the public texts Qwen2's counts are
+    // within 3.1% of Grok 4.3 and 4.20 and 2.6% of Grok 4.5 to 4.7; o200k's are 16% off on Chinese.
+    ("qwen2", |name| name.contains("grok")),
 ];
 
 fn contains_any(name: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| name.contains(needle))
+}
+
+/// The version right after `qwen` in a name, such as `(3, 5)` for `qwen3.5-plus` and `(3, 0)` for
+/// `qwen3-max`; `None` for an unversioned name such as `qwen-plus`.
+fn qwen_version(name: &str) -> Option<(u32, u32)> {
+    let (_, rest) = name.split_once("qwen")?;
+    let (major, rest) = leading_number(rest)?;
+    let minor = rest
+        .strip_prefix('.')
+        .and_then(leading_number)
+        .map_or(0, |(minor, _)| minor);
+    Some((major, minor))
+}
+
+/// The number a text starts with, and the rest of the text.
+fn leading_number(text: &str) -> Option<(u32, &str)> {
+    let end = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    Some((text[..end].parse().ok()?, &text[end..]))
 }
 
 #[cfg(test)]
@@ -300,7 +341,22 @@ mod tests {
             ("command-r-plus", "command-r"),
             ("command-a-03-2025", "command-a"),
             ("qwen3-max", "qwen2"),
+            ("qwen-plus", "qwen2"),
+            ("qwen2.5-72b-instruct", "qwen2"),
             ("qwq-32b", "qwen2"),
+            ("qwen3.5-plus", "qwen3.5"),
+            ("Qwen/Qwen3.5-397B-A17B", "qwen3.5"),
+            ("qwen3.8-max", "qwen3.5"),
+            ("z-ai/glm-5.3", "glm"),
+            ("glm-4.5-air", "glm"),
+            ("MiniMax-M3", "minimax"),
+            ("minimax/minimax-m3.1-flash", "minimax"),
+            ("pixtral-large-latest", "nemo"),
+            ("mixtral-8x7b-instruct", "mistral"),
+            ("mai-ds-r1", "deepseek"),
+            ("r1-1776", "deepseek"),
+            ("sonar-reasoning-pro", "deepseek"),
+            ("x-ai/grok-4.7", "qwen2"),
             ("nemo-12b", "nemo"),
             ("deepseek-chat", "deepseek"),
             ("  GPT-4O  ", "gpt-4o"),
@@ -314,8 +370,9 @@ mod tests {
         for (name, id) in [
             ("llama-3.3-70b", "llama3"),
             ("nerdstash-v2", "nerdstash_v2"),
-            ("mistral-nemo", "mistral"),
+            ("open-mistral-nemo", "nemo"),
             ("deepseek-r1-distill-qwen-32b", "qwen2"),
+            ("tongyi-deepresearch-30b-a3b", "qwen2"),
         ] {
             assert_eq!(resolved_id(name), Some(id), "{name}");
         }
@@ -323,7 +380,7 @@ mod tests {
 
     #[test]
     fn unknown_names_resolve_to_nothing() {
-        for name in ["", "my-unknown-model", "glm-5", "grok3", "work3"] {
+        for name in ["", "my-unknown-model", "work3"] {
             assert_eq!(resolved_id(name), None, "{name}");
         }
     }
